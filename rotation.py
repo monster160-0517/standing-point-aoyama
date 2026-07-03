@@ -937,11 +937,17 @@ def run_rotation():
                 zone_required_capacity[z] = required_capacity
 
             locked_names = [name for name in list(pool) if assignment_locks.get(name)]
+            locked_flexible_assigned = 0
             for locked_name in locked_names:
                 lock_info = assignment_locks.get(locked_name)
                 if not lock_info:
                     continue
                 locked_zone = lock_info["zone"]
+                if is_flexible_zone(locked_zone):
+                    if locked_flexible_assigned >= MAX_OP_ASSIGNMENTS_PER_SLOT:
+                        assignment_locks[locked_name] = None
+                        continue
+                    locked_flexible_assigned += 1
                 assign_staff_to_zone(
                     slot,
                     locked_zone,
