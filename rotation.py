@@ -1090,16 +1090,49 @@ if 'result_df' in st.session_state:
             return "#1d4ed8"
         return "#059669"
 
+    def get_zone_style(value):
+        text = normalize_schedule_value(value).strip()
+        upper = text.upper()
+
+        if text in {"", " "}:
+            return {"bg": "#ffffff", "fg": "#9ca3af", "weight": "400"}
+        if text == "-":
+            return {"bg": "#f3f4f6", "fg": "#6b7280", "weight": "600"}
+        if text in {"식사", "休憩", "休憩 / Meal"}:
+            return {"bg": "#fef3c7", "fg": "#92400e", "weight": "700"}
+        if text in {"2回目休憩", "2回休", "2回目休憩 / 2nd Break"}:
+            return {"bg": "#dcfce7", "fg": "#166534", "weight": "700"}
+        if is_docent_assignment(text):
+            return {"bg": "#fde68a", "fg": "#92400e", "weight": "700"}
+        if is_counter_zone(text):
+            return {"bg": "#e9d5ff", "fg": "#6b21a8", "weight": "700"}
+        if upper == "OP" or is_flexible_zone(text):
+            return {"bg": "#ccfbf1", "fg": "#0f766e", "weight": "700"}
+        if is_photo_zone(text):
+            return {"bg": "#fbcfe8", "fg": "#9d174d", "weight": "700"}
+        if is_w_zone(text):
+            return {"bg": "#d1fae5", "fg": "#065f46", "weight": "700"}
+        if is_b1_zone(text):
+            return {"bg": "#fed7aa", "fg": "#9a3412", "weight": "700"}
+        if "1층" in text or "1F" in upper:
+            return {"bg": "#dbeafe", "fg": "#1d4ed8", "weight": "700"}
+        if "2층" in text or "2F" in upper:
+            return {"bg": "#fee2e2", "fg": "#be123c", "weight": "700"}
+
+        fallback_palette = [
+            ("#ede9fe", "#5b21b6"),
+            ("#fae8ff", "#a21caf"),
+            ("#dbeafe", "#1d4ed8"),
+            ("#cffafe", "#155e75"),
+            ("#dcfce7", "#166534"),
+            ("#fef3c7", "#92400e"),
+        ]
+        palette_idx = sum(ord(ch) for ch in text) % len(fallback_palette) if text else 0
+        bg, fg = fallback_palette[palette_idx]
+        return {"bg": bg, "fg": fg, "weight": "700"}
+
     def get_zone_background(value):
-        text = str(value)
-        low = text.lower()
-        if "카운터" in low or "counter" in low:
-            return "#ede9fe"
-        if "2층" in low or "2f" in low:
-            return "#fee2e2"
-        if "1층" in low or "1f" in low:
-            return "#dbeafe"
-        return ""
+        return get_zone_style(value)["bg"]
 
     def excel_color(hex_color):
         return hex_color.replace("#", "").upper()
@@ -1107,8 +1140,6 @@ if 'result_df' in st.session_state:
     def style_rotation_worksheet(ws, df):
         thin_side = Side(style="thin", color="DDDDDD")
         header_fill = PatternFill(fill_type="solid", fgColor=excel_color("#f8f9fa"))
-        meal_fill = PatternFill(fill_type="solid", fgColor=excel_color("#fff5ba"))
-        second_break_fill = PatternFill(fill_type="solid", fgColor=excel_color("#dcfce7"))
         center_alignment = Alignment(horizontal="center", vertical="center")
 
         for cell in ws[1]:
@@ -1127,20 +1158,9 @@ if 'result_df' in st.session_state:
                 cell = ws.cell(row=row_idx, column=col_idx)
                 cell.alignment = center_alignment
                 cell.border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
-
-                if str(value) in {"식사", "休憩 / Meal"}:
-                    cell.fill = meal_fill
-                    continue
-                if str(value) in {"2回目休憩", "2回目休憩 / 2nd Break"}:
-                    cell.fill = second_break_fill
-                    continue
-                if is_docent_assignment(value):
-                    cell.fill = PatternFill(fill_type="solid", fgColor=excel_color("#fde68a"))
-                    continue
-
-                zone_color = get_zone_background(value)
-                if zone_color:
-                    cell.fill = PatternFill(fill_type="solid", fgColor=excel_color(zone_color))
+                zone_style = get_zone_style(value)
+                cell.fill = PatternFill(fill_type="solid", fgColor=excel_color(zone_style["bg"]))
+                cell.font = Font(color=excel_color(zone_style["fg"]), bold=zone_style["weight"] == "700")
 
         ws.freeze_panes = "B2"
         ws.column_dimensions["A"].width = 18
@@ -1167,21 +1187,38 @@ if 'result_df' in st.session_state:
             table_html += f"<tr><td class='staff-name' style='color: {color};'>{escape(str(staff))}</td>"
             for _, val in row.items():
                 text = normalize_schedule_value(val)
-                bg = ""
-                if text in {"식사", "休憩 / Meal"}:
-                    bg = "background-color: #fff5ba;"
-                elif text in {"2回目休憩", "2回目休憩 / 2nd Break"}:
-                    bg = "background-color: #dcfce7;"
-                elif is_docent_assignment(text):
-                    bg = "background-color: #fde68a;"
-                else:
-                    zone_color = get_zone_background(text)
-                    if zone_color:
-                        bg = f"background-color: {zone_color};"
-                table_html += f"<td style='{bg}'>{escape(text)}</td>"
+                zone_style = get_zone_style(text)
+                cell_style = (
+                    f"background-color: {zone_style['bg']};"
+                    f"color: {zone_style['fg']};"
+                    f"font-weight: {zone_style['weight']};"
+                )
+                table_html += f"<td style='{cell_style}'>{escape(text)}</td>"
             table_html += "</tr>"
         table_html += "</tbody></table></div>"
         return table_html
+
+    def build_color_legend():
+        legend_items = [
+            ("カウンター", get_zone_style("カウンター")),
+            ("1Fゾーン", get_zone_style("1Fゾーン")),
+            ("2Fゾーン", get_zone_style("2Fゾーン")),
+            ("W", get_zone_style("1F-W")),
+            ("B1", get_zone_style("2F-B1")),
+            ("フォト", get_zone_style("1F-PHOTO")),
+            ("OP", get_zone_style("OP")),
+            ("ETC", get_zone_style("ETC")),
+            ("休憩", get_zone_style("休憩")),
+            ("2回休", get_zone_style("2回休")),
+        ]
+        chips = []
+        for label, style in legend_items:
+            chips.append(
+                "<span class='legend-chip' "
+                f"style='background:{style['bg']};color:{style['fg']};font-weight:{style['weight']};'>"
+                f"{escape(label)}</span>"
+            )
+        return "<div class='legend-wrap'>" + "".join(chips) + "</div>"
 
     def build_zone_coverage_table(coverage_rows, time_slots):
         table_html = "<div class='table-scroll coverage-scroll'><table class='rotation-table coverage-table'>"
@@ -1234,11 +1271,14 @@ if 'result_df' in st.session_state:
         ".coverage-cell.empty{border:2px solid #dc2626 !important;background:#fff1f2;}"
         ".coverage-assigned{font-size:0.84rem;font-weight:700;color:#111827;}"
         ".coverage-required{margin-top:3px;font-size:0.68rem;color:#64748b;}"
+        ".legend-wrap{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 12px;}"
+        ".legend-chip{display:inline-flex;align-items:center;justify-content:center;padding:6px 10px;border-radius:999px;border:1px solid rgba(15,23,42,0.08);font-size:0.78rem;line-height:1;}"
         "</style>"
     )
     coverage_rows, total_empty_zones, total_remaining_to, affected_times = build_zone_coverage_summary(edited_raw_df)
     table_html = build_table(edited_display_df)
     coverage_table_html = build_zone_coverage_table(coverage_rows, edited_display_df.columns)
+    color_legend_html = build_color_legend()
     page_html = "<!doctype html><html lang='ja'><head><meta charset='utf-8'/><title>モバイル共有ボード / Mobile share board</title>"
     page_html += (
         "<style>"
@@ -1316,6 +1356,7 @@ if 'result_df' in st.session_state:
     st.write("---")
     st.markdown("### 🎨 カラー現況表 / Color schedule")
     st.caption("上の編集表の内容がすぐ反映される読み取り専用プレビューです / Read-only preview synced with the editable table above.")
+    st.markdown(color_legend_html, unsafe_allow_html=True)
     st.markdown(table_html, unsafe_allow_html=True)
     st.write("---")
     st.markdown("### 📸 モバイル共有ボード / Mobile share board")
