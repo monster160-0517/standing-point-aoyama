@@ -20,6 +20,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 st.title("GENTLEMONSTER AOYAMA")
+st.caption("フロアスケジュール / Floor schedule")
 
 # 🔗 AOYAMA 전용 시트 설정
 STORE_NAME = "GENTLEMONSTER AOYAMA"
@@ -28,9 +29,36 @@ DAY_TYPES = {
     "평일": {"DB_GID": "738722894", "TO_GID": "410487706"},
     "주말": {"DB_GID": "0", "TO_GID": "2126973547"},
 }
+DAY_TYPE_LABELS = {
+    "평일": "平日 / Weekday",
+    "주말": "週末 / Weekend",
+}
+RAW_TO_DISPLAY = {
+    "식사": "休憩 / Meal",
+    "도슨트": "ドーセント / Docent",
+    "1층 유동": "1F-流動 / 1F Float",
+    "2층 유동": "2F-流動 / 2F Float",
+}
+COLUMN_ALIASES = {
+    "name": ["이름", "氏名", "名前", "Name"],
+    "type": ["구분", "区分", "雇用区分", "Type"],
+    "start_time": ["출근시간", "出勤時間", "Start Time"],
+    "end_time": ["퇴근시간", "退勤時間", "End Time"],
+    "lunch": ["점심", "昼休憩", "Lunch"],
+    "dinner": ["저녁", "夕方休憩", "Dinner"],
+    "meal_time": ["식사시간", "食事時間", "Meal Time"],
+    "counter_flag": ["카운터여부", "カウンター可否", "Counter Eligible"],
+    "flex_flag": ["유동여부", "流動可否", "Float Eligible"],
+}
+DOCENT_COLUMN_TOKENS = ["도슨트", "ドーセント", "DOCENT", "Docent"]
 
 st.sidebar.markdown(f"**🏠 {STORE_NAME}**")
-selected_day_type = st.sidebar.radio("📅 운영 구분", ["평일", "주말"], horizontal=True)
+selected_day_type = st.sidebar.radio(
+    "📅 営業区分 / Day Type",
+    ["평일", "주말"],
+    horizontal=True,
+    format_func=lambda key: DAY_TYPE_LABELS.get(key, key),
+)
 day_type_config = DAY_TYPES[selected_day_type]
 DB_SHEET_GID = day_type_config["DB_GID"]
 TO_SHEET_GID = day_type_config["TO_GID"]
@@ -48,12 +76,31 @@ def load_sheet_data(sheet_id, gid=None, sheet_name=None):
         df = df.fillna("").replace(r'\.0$', '', regex=True)
         return df
     except Exception as e:
-        st.error(f"시트 로딩 실패: {e}")
+        st.error(f"シートの読み込みに失敗しました / Failed to load sheet: {e}")
         return pd.DataFrame()
+
+def load_first_available_sheet(sheet_id, sheet_names):
+    for sheet_name in sheet_names:
+        df = load_sheet_data(sheet_id, sheet_name=sheet_name)
+        if not df.empty:
+            return df
+    return pd.DataFrame()
+
+def find_column(columns, aliases, fallback=None):
+    for alias in aliases:
+        if alias in columns:
+            return alias
+    return fallback if fallback is not None else aliases[0]
+
+def find_docent_columns(columns):
+    return [
+        column for column in columns
+        if any(token.lower() in str(column).lower() for token in DOCENT_COLUMN_TOKENS)
+    ]
 
 db_df = load_sheet_data(SHEET_ID, DB_SHEET_GID)
 to_df = load_sheet_data(SHEET_ID, TO_SHEET_GID)
-docent_df = load_sheet_data(SHEET_ID, sheet_name="도슨트")
+docent_df = load_first_available_sheet(SHEET_ID, ["도슨트", "ドーセント", "Docent"])
 
 if db_df.empty: st.stop()
 
@@ -103,13 +150,30 @@ def parse_time_list(value):
             times.append(clean)
     return sorted(set(times))
 
+def translate_zone_name(zone_name):
+    text = str(zone_name).strip()
+    if not text:
+        return text
+
+    translated = text
+    translated = translated.replace("카운터", "カウンター / Counter")
+    translated = translated.replace("유동", "流動 / Float")
+    translated = translated.replace("PHOTO", "フォト / Photo")
+    return translated
+
+def to_display_value(value):
+    text = normalize_schedule_value(value)
+    if text in RAW_TO_DISPLAY:
+        return RAW_TO_DISPLAY[text]
+    return translate_zone_name(text)
+
 def is_counter_zone(zone_name):
     zone = str(zone_name).upper()
-    return "카운터" in zone or "COUNTER" in zone or "1F-C" in zone or "2F-C" in zone
+    return "카운터" in zone or "カウンター" in zone or "COUNTER" in zone or "1F-C" in zone or "2F-C" in zone
 
 def is_flexible_zone(zone_name):
     zone = str(zone_name)
-    return "유동" in zone
+    return "유동" in zone or "流動" in zone or "FLOAT" in zone.upper()
 
 def get_zone_category(zone_name):
     zone = str(zone_name).upper()
@@ -133,13 +197,19 @@ def get_floor_bucket(zone_name):
     if "2층" in zone or "2F" in upper:
         return "2f"
     if "카운터" in zone or "COUNTER" in upper:
+        if "カウンター" in zone:
+            if "2" in zone:
+                return "2f"
+            if "1" in zone:
+                return "1f"
+            return "counter"
         # default to whichever floor indicator is included
         if "2" in zone:
             return "2f"
         if "1" in zone:
             return "1f"
         return "counter"
-    if "유동" in zone:
+    if "유동" in zone or "流動" in zone:
         if "2" in zone:
             return "2f"
         if "1" in zone:
@@ -159,7 +229,7 @@ def is_w_zone(zone_name):
 
 def is_photo_zone(zone_name):
     zone = str(zone_name).upper()
-    return "PHOTO" in zone
+    return "PHOTO" in zone or "フォト" in str(zone_name)
 
 def is_b1_zone(zone_name):
     zone = str(zone_name).upper()
@@ -167,7 +237,7 @@ def is_b1_zone(zone_name):
 
 def is_docent_zone(zone_name):
     zone = str(zone_name).strip()
-    return "도슨트" in zone or "DOCENT" in zone.upper()
+    return "도슨트" in zone or "ドーセント" in zone or "DOCENT" in zone.upper()
 
 def get_special_zone_group(zone_name):
     if is_w_zone(zone_name):
@@ -175,7 +245,7 @@ def get_special_zone_group(zone_name):
     return None
 
 def is_docent_assignment(value):
-    return str(value).strip() == "도슨트"
+    return str(value).strip() in {"도슨트", "ドーセント", "ドーセント / Docent"}
 
 def normalize_schedule_value(value):
     text = str(value)
@@ -184,7 +254,7 @@ def normalize_schedule_value(value):
     return text
 
 def is_enabled_flag(value):
-    return any(x in str(value).lower() for x in ['o', 'y', '1', 'v', '예'])
+    return any(x in str(value).lower() for x in ['o', 'y', '1', 'v', '예', '可', 'yes', 'true'])
 
 def pick_best_staff(zone_name, pool, previous_assignments):
     if not pool:
@@ -218,27 +288,34 @@ def pick_best_staff(zone_name, pool, previous_assignments):
 
 # --- 기본 데이터 파싱 ---
 def get_initial_staff(data):
-    type_col = next((c for c in data.columns if '구분' in c), '구분')
-    name_col = next((c for c in data.columns if '이름' in c), '이름')
-    docent_cols = [c for c in data.columns if '도슨트' in str(c)]
+    type_col = find_column(data.columns, COLUMN_ALIASES["type"], "구분")
+    name_col = find_column(data.columns, COLUMN_ALIASES["name"], "이름")
+    start_col = find_column(data.columns, COLUMN_ALIASES["start_time"], "출근시간")
+    end_col = find_column(data.columns, COLUMN_ALIASES["end_time"], "퇴근시간")
+    lunch_col = find_column(data.columns, COLUMN_ALIASES["lunch"], "점심")
+    dinner_col = find_column(data.columns, COLUMN_ALIASES["dinner"], "저녁")
+    meal_col = find_column(data.columns, COLUMN_ALIASES["meal_time"], "식사시간")
+    counter_col = find_column(data.columns, COLUMN_ALIASES["counter_flag"], "카운터여부")
+    flex_col = find_column(data.columns, COLUMN_ALIASES["flex_flag"], "유동여부")
+    docent_cols = find_docent_columns(data.columns)
     res = []
     for _, row in data.iterrows():
         name = str(row.get(name_col, "")).strip()
         stype = str(row.get(type_col, "")).strip()
-        if name and any(kw in stype for kw in ['정직', '파트']):
+        if name and any(kw in stype for kw in ['정직', '파트', '正社員', 'アルバイト', 'part', 'full']):
             docent_times = []
             for docent_col in docent_cols:
                 docent_times.extend(parse_time_list(row.get(docent_col, "")))
             res.append({
                 "original_name": name,
-                "type": '정직' if '정직' in stype else '파트',
-                "in": get_clean_time(row.get('출근시간', '11')),
-                "out": get_clean_time(row.get('퇴근시간', '21')),
-                "meal1": get_clean_time(row.get('점심', '')),
-                "meal2": get_clean_time(row.get('저녁', '')),
-                "meal_p": get_clean_time(row.get('식사시간', '')),
-                "can_counter": is_enabled_flag(row.get('카운터여부', 'X')),
-                "can_flexible": is_enabled_flag(row.get('유동여부', 'X')),
+                "type": '정직' if any(kw in stype for kw in ['정직', '正社員', 'full']) else '파트',
+                "in": get_clean_time(row.get(start_col, '11')),
+                "out": get_clean_time(row.get(end_col, '21')),
+                "meal1": get_clean_time(row.get(lunch_col, '')),
+                "meal2": get_clean_time(row.get(dinner_col, '')),
+                "meal_p": get_clean_time(row.get(meal_col, '')),
+                "can_counter": is_enabled_flag(row.get(counter_col, 'X')),
+                "can_flexible": is_enabled_flag(row.get(flex_col, 'X')),
                 "docent_times": sorted(set(docent_times)),
             })
     return res
@@ -258,8 +335,8 @@ def get_docent_schedule(staff_rows, extra_data):
     if extra_data.empty:
         return schedule
 
-    name_col = next((c for c in extra_data.columns if '이름' in c), '이름')
-    docent_cols = [c for c in extra_data.columns if '도슨트' in str(c)]
+    name_col = find_column(extra_data.columns, COLUMN_ALIASES["name"], "이름")
+    docent_cols = find_docent_columns(extra_data.columns)
     if not docent_cols:
         return schedule
 
@@ -279,15 +356,15 @@ raw_staff = get_initial_staff(db_df)
 docent_schedule = get_docent_schedule(raw_staff, docent_df)
 
 # --- 사이드바: 파트타이머 상세 조정 ---
-st.sidebar.header("🕹️ 인원 관리")
-use_docent_schedule = st.sidebar.checkbox("🎤 도슨트 일정 반영", value=True)
-with st.sidebar.expander("🎤 도슨트 탭", expanded=False):
-    st.caption("`도슨트`, `도슨트1`, `도슨트2`, `도슨트3` 컬럼을 모두 자동 인식합니다.")
+st.sidebar.header("🕹️ 人員管理 / Staffing")
+use_docent_schedule = st.sidebar.checkbox("🎤 ドーセント予定を反映 / Apply docent schedule", value=True)
+with st.sidebar.expander("🎤 ドーセントタブ / Docent tab", expanded=False):
+    st.caption("`도슨트`, `ドーセント`, `도슨트1/2/3`, `ドーセント1/2/3` 列を自動認識します / Automatically detects docent columns.")
     if docent_schedule:
         for docent_name, docent_times in sorted(docent_schedule.items()):
             st.write(f"{docent_name}: {', '.join(docent_times)}")
     else:
-        st.caption("선택한 평일/주말 직원DB에 기록된 도슨트 시간이 없습니다.")
+        st.caption("選択した平日/週末DBにドーセント時間の記録がありません / No docent times found for the selected day type.")
 
 pt_list = [s for s in raw_staff if s['type'] == '파트']
 
@@ -316,7 +393,11 @@ if st.session_state.get("pt_input_signature") != pt_input_signature:
         st.session_state[f"meal_{pt_name}"] = defaults["meal"]
     st.session_state["pt_input_signature"] = pt_input_signature
 
-selected_pt_names = st.sidebar.multiselect("⏱️ 출근 파트타이머 선택", [s['original_name'] for s in pt_list], default=[s['original_name'] for s in pt_list])
+selected_pt_names = st.sidebar.multiselect(
+    "⏱️ 出勤アルバイト選択 / Select part-timers on duty",
+    [s['original_name'] for s in pt_list],
+    default=[s['original_name'] for s in pt_list],
+)
 
 final_staff_configs = []
 
@@ -325,7 +406,7 @@ for s in [x for x in raw_staff if x['type'] == '정직']:
     work_range, in_hr, out_hr = build_work_range(s['in'], s['out'])
     if work_range is None:
         continue
-    tag = "(A조)" if in_hr <= 10 else "(B조)"
+    tag = "(A Shift)" if in_hr <= 10 else "(B Shift)"
     s['display_name'] = f"{s['original_name']}{tag}"
     s['meals'] = list(set([m for m in [s['meal1'], s['meal2']] if m]))
     s['docent_times'] = docent_schedule.get(s['original_name'], []) if use_docent_schedule else []
@@ -337,20 +418,20 @@ for s in [x for x in raw_staff if x['type'] == '정직']:
 # 2. 파트타이머 처리 (조 이름 제외 + 사이드바 조정값 반영)
 if selected_pt_names:
     st.sidebar.markdown("---")
-    st.sidebar.subheader("📋 파트타이머 시간 조정")
+    st.sidebar.subheader("📋 アルバイト時間調整 / Part-timer hours")
     for pt_name in selected_pt_names:
         pt_origin = next(s for s in pt_list if s['original_name'] == pt_name)
         with st.sidebar.expander(f"👤 {pt_name}"):
             c1, c2 = st.columns(2)
-            new_in = c1.text_input(f"출근", key=f"in_{pt_name}")
-            new_out = c2.text_input(f"퇴근", key=f"out_{pt_name}")
-            new_meal = st.text_input(f"식사", key=f"meal_{pt_name}")
+            new_in = c1.text_input("出勤 / In", key=f"in_{pt_name}")
+            new_out = c2.text_input("退勤 / Out", key=f"out_{pt_name}")
+            new_meal = st.text_input("食事 / Meal", key=f"meal_{pt_name}")
 
             pt_copy = pt_origin.copy()
             work_range, in_hr, out_hr = build_work_range(new_in, new_out)
 
             if work_range is None:
-                st.warning(f"{pt_name}: 출근/퇴근 시간을 다시 확인해 주세요.")
+                st.warning(f"{pt_name}: 出勤/退勤時間を再確認してください / Please check the in/out times.")
                 continue
 
             pt_copy['display_name'] = pt_name # 조 태그 없음
@@ -695,28 +776,34 @@ def run_rotation():
                 counter_consecutive_hours[n] = 0
     return schedule_df
 
-if st.sidebar.button("🚀 로테이션 자동 생성", width="stretch"):
+if st.sidebar.button("🚀 ローテーション自動生成 / Generate rotation", width="stretch"):
     st.session_state.result_df = run_rotation()
 
 # --- 화면 출력 ---
 if 'result_df' in st.session_state:
     res = st.session_state.result_df
-    st.write(f"### 📅 [{STORE_NAME} / {selected_day_type}] 로테이션")
-    st.caption("수정은 아래 표에서 하고, 변경 내용은 모바일 공유용 현황판에 바로 반영됩니다.")
-    display_df = res.transpose().map(normalize_schedule_value)
-    display_df.index.name = "직원명"
+    st.write(f"### 📅 [{STORE_NAME} / {DAY_TYPE_LABELS.get(selected_day_type, selected_day_type)}] フロアローテーション / Floor rotation")
+    st.caption("下の表で修正すると、下部の共有ボードにすぐ反映されます / Edits below are reflected immediately in the shared board preview.")
+    raw_display_df = res.transpose().map(normalize_schedule_value)
+    raw_display_df.index.name = "직원명"
+    display_to_raw = {}
+    for raw_value in sorted(set(str(val).strip() for val in raw_display_df.values.flatten()) | set(zone_columns := [c for c in to_df.columns if c != to_df.columns[0]]) | set(RAW_TO_DISPLAY.keys())):
+        display_value = to_display_value(raw_value)
+        if display_value:
+            display_to_raw[display_value] = raw_value
+    display_df = raw_display_df.map(to_display_value)
+    display_df.index.name = "Employee / 氏名"
     editor_df = display_df.reset_index()
-    editor_df = editor_df[["직원명"] + [c for c in editor_df.columns if c != "직원명"]]
-    zone_columns = [c for c in to_df.columns if c != to_df.columns[0]]
-    zone_choices = set(zone_columns)
+    editor_df = editor_df[["Employee / 氏名"] + [c for c in editor_df.columns if c != "Employee / 氏名"]]
+    zone_choices = set(display_to_raw.keys())
     zone_choices.update(str(val).strip() for val in display_df.values.flatten() if str(val).strip())
-    zone_choices.update(["식사", "도슨트", "1층 유동", "2층 유동", "-", ""])
-    zone_choices = sorted(zone_choices)
+    zone_choices.update(to_display_value(val) for val in ["식사", "도슨트", "1층 유동", "2층 유동", "-", ""])
+    zone_choices = sorted(choice for choice in zone_choices if choice != "")
     column_settings = {
         col: (
             st.column_config.SelectboxColumn(options=zone_choices)
-            if col != "직원명"
-            else st.column_config.TextColumn(label="직원명", disabled=True)
+            if col != "Employee / 氏名"
+            else st.column_config.TextColumn(label="Employee / 氏名", disabled=True)
         )
         for col in editor_df.columns
     }
@@ -729,15 +816,21 @@ if 'result_df' in st.session_state:
         num_rows="fixed",
         key="rotation_editor",
     )
-    edited_df = edited_editor_df.copy()
-    edited_df["직원명"] = edited_df["직원명"].astype(str).str.strip()
-    edited_df = edited_df.set_index("직원명")
-    edited_df.index.name = "직원명"
-    edited_df = edited_df.reindex(columns=display_df.columns)
-    edited_df = edited_df.map(normalize_schedule_value)
-    edited_df = enforce_priority_slots(edited_df)
-    csv_bytes = edited_df.to_csv(index=True).encode('utf-8')
-    file_name = f"rotation_{STORE_NAME}_{selected_day_type}_{date.today():%Y%m%d}"
+    edited_display_df = edited_editor_df.copy()
+    edited_display_df["Employee / 氏名"] = edited_display_df["Employee / 氏名"].astype(str).str.strip()
+    edited_display_df = edited_display_df.set_index("Employee / 氏名")
+    edited_display_df.index.name = "Employee / 氏名"
+    edited_display_df = edited_display_df.reindex(columns=display_df.columns)
+    edited_display_df = edited_display_df.map(normalize_schedule_value)
+    edited_raw_df = edited_display_df.map(lambda value: display_to_raw.get(str(value).strip(), normalize_schedule_value(value)))
+    edited_raw_df.index = raw_display_df.index
+    edited_raw_df.index.name = "직원명"
+    edited_raw_df = enforce_priority_slots(edited_raw_df)
+    edited_display_df = edited_raw_df.map(to_display_value)
+    edited_display_df.index.name = "Employee / 氏名"
+    csv_bytes = edited_display_df.to_csv(index=True).encode('utf-8-sig')
+    day_type_slug = "weekday" if selected_day_type == "평일" else "weekend"
+    file_name = f"rotation_{STORE_NAME}_{day_type_slug}_{date.today():%Y%m%d}"
 
     def parse_required_count(raw_value):
         raw = str(raw_value).strip()
@@ -786,8 +879,6 @@ if 'result_df' in st.session_state:
                     affected_times.add(slot)
                 if remaining_to > 0:
                     total_remaining_to += remaining_to
-                if assigned == 0:
-                    affected_times.add(slot)
 
                 row[slot] = {
                     "assigned": assigned,
@@ -804,9 +895,9 @@ if 'result_df' in st.session_state:
         s_info = next((s for s in final_staff_configs if s['display_name'] == name), None)
         if not s_info:
             return "#111827"
-        if "(A조)" in name:
+        if "(A Shift)" in name:
             return "#f97316"
-        if "(B조)" in name:
+        if "(B Shift)" in name:
             return "#2563eb"
         if s_info["type"] == '정직':
             return "#1d4ed8"
@@ -849,10 +940,10 @@ if 'result_df' in st.session_state:
                 cell.alignment = center_alignment
                 cell.border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
 
-                if str(value) == "식사":
+                if str(value) in {"식사", "休憩 / Meal"}:
                     cell.fill = meal_fill
                     continue
-                if str(value) == "도슨트":
+                if is_docent_assignment(value):
                     cell.fill = PatternFill(fill_type="solid", fgColor=excel_color("#fde68a"))
                     continue
 
@@ -869,14 +960,14 @@ if 'result_df' in st.session_state:
 
     with BytesIO() as buf:
         with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-            edited_df.to_excel(writer, index=True, sheet_name="rotation")
-            style_rotation_worksheet(writer.book["rotation"], edited_df)
+            edited_display_df.to_excel(writer, index=True, sheet_name="rotation")
+            style_rotation_worksheet(writer.book["rotation"], edited_display_df)
         buf.seek(0)
         excel_bytes = buf.getvalue()
 
     def build_table(df):
         table_html = "<div class='table-scroll'><table class='rotation-table'>"
-        table_html += "<thead><tr><th>직원</th>"
+        table_html += "<thead><tr><th>氏名 / Employee</th>"
         for time in df.columns:
             table_html += f"<th>{escape(str(time))}</th>"
         table_html += "</tr></thead><tbody>"
@@ -886,7 +977,7 @@ if 'result_df' in st.session_state:
             for _, val in row.items():
                 text = normalize_schedule_value(val)
                 bg = ""
-                if text == "식사":
+                if text in {"식사", "休憩 / Meal"}:
                     bg = "background-color: #fff5ba;"
                 elif is_docent_assignment(text):
                     bg = "background-color: #fde68a;"
@@ -901,13 +992,13 @@ if 'result_df' in st.session_state:
 
     def build_zone_coverage_table(coverage_rows, time_slots):
         table_html = "<div class='table-scroll coverage-scroll'><table class='rotation-table coverage-table'>"
-        table_html += "<thead><tr><th>구역</th>"
+        table_html += "<thead><tr><th>ゾーン / Zone</th>"
         for slot in time_slots:
             table_html += f"<th>{escape(str(slot))}</th>"
         table_html += "</tr></thead><tbody>"
 
         for row in coverage_rows:
-            table_html += f"<tr><td class='staff-name zone-name'>{escape(str(row['zone']))}</td>"
+            table_html += f"<tr><td class='staff-name zone-name'>{escape(translate_zone_name(row['zone']))}</td>"
             for slot in time_slots:
                 cell = row.get(slot)
                 if cell is None:
@@ -924,8 +1015,8 @@ if 'result_df' in st.session_state:
 
                 table_html += (
                     f"<td class='{' '.join(classes)}'>"
-                    f"<div class='coverage-assigned'>{cell['assigned']}명</div>"
-                    f"<div class='coverage-required'>TO {cell['to']}명</div>"
+                    f"<div class='coverage-assigned'>{cell['assigned']}名</div>"
+                    f"<div class='coverage-required'>TO {cell['to']}名</div>"
                     "</td>"
                 )
             table_html += "</tr>"
@@ -952,10 +1043,10 @@ if 'result_df' in st.session_state:
         ".coverage-required{margin-top:4px;font-size:0.78rem;color:#64748b;}"
         "</style>"
     )
-    coverage_rows, total_empty_zones, total_remaining_to, affected_times = build_zone_coverage_summary(edited_df)
-    table_html = build_table(edited_df)
-    coverage_table_html = build_zone_coverage_table(coverage_rows, edited_df.columns)
-    page_html = "<!doctype html><html lang='ko'><head><meta charset='utf-8'/><title>모바일 공유 현황판</title>"
+    coverage_rows, total_empty_zones, total_remaining_to, affected_times = build_zone_coverage_summary(edited_raw_df)
+    table_html = build_table(edited_display_df)
+    coverage_table_html = build_zone_coverage_table(coverage_rows, edited_display_df.columns)
+    page_html = "<!doctype html><html lang='ja'><head><meta charset='utf-8'/><title>モバイル共有ボード / Mobile share board</title>"
     page_html += (
         "<style>"
         "html,body{height:100%;margin:0;padding:0;background:#f8fafc;font-family:'Pretendard','Noto Sans KR',sans-serif;}"
@@ -964,14 +1055,14 @@ if 'result_df' in st.session_state:
         "</style>"
         f"{table_styles}"
     )
-    page_html += "</head><body><div class='page-wrap'><h1>모바일 공유 현황판</h1>"
+    page_html += "</head><body><div class='page-wrap'><h1>モバイル共有ボード / Mobile share board</h1>"
     page_html += table_html
     page_html += "</div></body></html>"
 
     widget_html = f"""
     <div style='margin-bottom:8px;'>
         <button style='border:0; padding:10px 16px; font-weight:600; background:#111827; color:#fff; border-radius:8px; cursor:pointer;'
-                onclick='openLargeRotation()'>🖥️ 크게 보기</button>
+                onclick='openLargeRotation()'>🖥️ 拡大表示 / Open large view</button>
     </div>
     <script>
     const largeRotationContent = {json.dumps(page_html)};
@@ -984,25 +1075,25 @@ if 'result_df' in st.session_state:
     </script>
     """
     st.markdown(table_styles, unsafe_allow_html=True)
-    st.markdown("### 🚨 구역별 배치 인원 체크")
+    st.markdown("### 🚨 ゾーン別配置チェック / Zone coverage check")
     metric_col1, metric_col2, metric_col3 = st.columns(3)
-    metric_col1.metric("빈 구역 총수", total_empty_zones)
-    metric_col2.metric("남은 TO 총수", total_remaining_to)
-    metric_col3.metric("영향 시간대", affected_times)
-    st.caption("TO는 최대 배치 가능 인원입니다. `0명`은 빨간색, TO가 다 차지 않은 칸은 노란색으로 강조합니다.")
+    metric_col1.metric("空きゾーン数 / Empty zones", total_empty_zones)
+    metric_col2.metric("残りTO合計 / Remaining TO", total_remaining_to)
+    metric_col3.metric("影響時間帯 / Affected hours", affected_times)
+    st.caption("TOは最大配置可能人数です。`0名`は赤、TO未充足は黄色で強調します / TO means maximum capacity. Empty cells are red and underfilled cells are yellow.")
     st.markdown(coverage_table_html, unsafe_allow_html=True)
     st.write("---")
-    st.markdown("### 🎨 컬러 현황표")
-    st.caption("위 수정용 표의 변경 내용이 바로 반영되는 읽기 전용 미리보기입니다.")
+    st.markdown("### 🎨 カラー現況表 / Color schedule")
+    st.caption("上の編集表の内容がすぐ反映される読み取り専用プレビューです / Read-only preview synced with the editable table above.")
     st.markdown(table_html, unsafe_allow_html=True)
     st.write("---")
-    st.markdown("### 📸 모바일 공유용 현황판")
+    st.markdown("### 📸 モバイル共有ボード / Mobile share board")
     components.html(widget_html, height=110)
     st.write("---")
-    st.markdown("### 📥 다운로드")
-    st.download_button("📥 현재 배정 다운로드 (CSV)", data=csv_bytes, file_name=f"{file_name}.csv", mime="text/csv")
+    st.markdown("### 📥 ダウンロード / Downloads")
+    st.download_button("📥 現在の配置をダウンロード (CSV) / Download current schedule", data=csv_bytes, file_name=f"{file_name}.csv", mime="text/csv")
     st.download_button(
-        "📥 현재 배정 다운로드 (Excel)",
+        "📥 現在の配置をダウンロード (Excel) / Download current schedule",
         data=excel_bytes,
         file_name=f"{file_name}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
