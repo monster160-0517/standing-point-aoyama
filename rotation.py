@@ -50,6 +50,7 @@ DOCENT_COLUMN_TOKENS = ["도슨트", "ドーセント", "DOCENT", "Docent", "ETC
 TIME_SLOT_STEP_MINUTES = 30
 MEAL_DURATION_MINUTES = 60
 SECOND_BREAK_DURATION_MINUTES = 30
+SECOND_BREAK_DEADLINE_MINUTES = 18 * 60
 
 st.sidebar.markdown(f"**🏠 {STORE_NAME}**")
 
@@ -532,39 +533,86 @@ def assign_second_breaks(staff_configs):
         get_minutes_from_time(meal_time, 0) + MEAL_DURATION_MINUTES
         for meal_time in meal_groups
     )
-    cursor_minutes = align_to_step(last_first_meal_end)
-    occupied_break_slots = set()
+    slot_loads = {}
 
-    def find_break_slot(staff, requested_start_minutes):
-        start_minutes = max(requested_start_minutes, last_first_meal_end)
-        candidate_minutes = align_to_step(start_minutes)
-        while candidate_minutes + SECOND_BREAK_DURATION_MINUTES <= staff.get('work_end_minutes', 0):
+    def build_candidate_slots(staff, requested_start_minutes=None):
+        earliest_minutes = last_first_meal_end
+        if requested_start_minutes is not None:
+            earliest_minutes = max(earliest_minutes, requested_start_minutes)
+
+        latest_end_minutes = min(
+            staff.get('work_end_minutes', 0),
+            SECOND_BREAK_DEADLINE_MINUTES,
+        )
+        latest_start_minutes = latest_end_minutes - SECOND_BREAK_DURATION_MINUTES
+        if latest_start_minutes < earliest_minutes:
+            return []
+
+        candidate_slots = []
+        for candidate_minutes in range(
+            align_to_step(earliest_minutes),
+            latest_start_minutes + 1,
+            TIME_SLOT_STEP_MINUTES,
+        ):
             candidate_slot = minutes_to_time(candidate_minutes)
             if (
                 candidate_slot in staff.get('work_range', set())
                 and candidate_slot not in staff.get('meals', [])
                 and candidate_slot not in staff.get('docent_times', [])
-                and candidate_slot not in occupied_break_slots
             ):
-                return candidate_slot
-            candidate_minutes += TIME_SLOT_STEP_MINUTES
-        return None
+                candidate_slots.append(candidate_slot)
+        return candidate_slots
 
+    prioritized_staff = []
     for meal_time in sorted(meal_groups, key=lambda value: get_minutes_from_time(value, 0)):
-        for staff in meal_groups[meal_time]:
-            override_slot = staff.get('second_break_override')
-            second_break_slot = None
-            if override_slot:
-                override_minutes = get_minutes_from_time(override_slot)
-                if override_minutes is not None:
-                    second_break_slot = find_break_slot(staff, override_minutes)
-            if second_break_slot is None:
-                second_break_slot = find_break_slot(staff, cursor_minutes)
-            if second_break_slot:
-                staff['second_breaks'] = [second_break_slot]
-                occupied_break_slots.add(second_break_slot)
-                cursor_minutes = get_minutes_from_time(second_break_slot, cursor_minutes) + SECOND_BREAK_DURATION_MINUTES
+        prioritized_staff.extend(meal_groups[meal_time])
 
+    prioritized_staff.sort(
+        key=lambda staff: (
+            staff.get('work_start_minutes') != 10 * 60,
+            staff.get('work_start_minutes', 10 ** 9),
+            get_minutes_from_time(staff.get('first_meal_time'), 10 ** 9),
+            staff.get('display_order', 10 ** 9),
+        )
+    )
+
+    for staff in prioritized_staff:
+        second_break_slot = None
+        override_slot = staff.get('second_break_override')
+        if override_slot:
+            override_minutes = get_minutes_from_time(override_slot)
+            if override_minutes is not None:
+                override_candidates = build_candidate_slots(staff, override_minutes)
+                if override_candidates:
+                    second_break_slot = override_candidates[0]
+
+        if second_break_slot is None:
+            candidate_slots = build_candidate_slots(staff)
+            if candidate_slots:
+                min_slot_load = min(slot_loads.get(slot, 0) for slot in candidate_slots)
+                least_loaded_slots = [
+                    slot for slot in candidate_slots
+                    if slot_loads.get(slot, 0) == min_slot_load
+                ]
+                second_break_slot = least_loaded_slots[0]
+
+        if second_break_slot:
+            staff['second_breaks'] = [second_break_slot]
+            slot_loads[second_break_slot] = slot_loads.get(second_break_slot, 0) + 1
+
+def sort_staff_configs_for_display(staff_configs):
+    staff_configs.sort(
+        key=lambda staff: (
+            staff.get('work_start_minutes') != 10 * 60,
+            staff.get('work_start_minutes', 10 ** 9),
+            staff.get('display_order', 10 ** 9),
+        )
+    )
+
+for idx, staff in enumerate(final_staff_configs):
+    staff['display_order'] = idx
+
+sort_staff_configs_for_display(final_staff_configs)
 assign_second_breaks(final_staff_configs)
 
 config_signature = json.dumps(
