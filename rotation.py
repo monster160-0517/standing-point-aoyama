@@ -28,8 +28,8 @@ SHEET_ID = "1XcXSvokpLlkWnTQtqs-Zlz6lLISXJ9Zy14kEOIOUGlA"
 DB_SHEET_GID = "0"
 TO_SHEET_GID = "410487706"
 RAW_TO_DISPLAY = {
-    "식사": "休憩 / Meal",
-    "2回目休憩": "2回目休憩 / 2nd Break",
+    "식사": "休憩",
+    "2回目休憩": "2回休",
     "도슨트": "ETC",
     "1층 유동": "1F-OP",
     "2층 유동": "2F-OP",
@@ -200,20 +200,20 @@ def translate_zone_name(zone_name):
 
     upper = text.upper()
     if upper == "COUNTER":
-        return "カウンター / Counter"
+        return "カウンター"
     if upper == "1F":
-        return "1Fゾーン / 1F Zone"
+        return "1Fゾーン"
     if upper == "2F":
-        return "2Fゾーン / 2F Zone"
+        return "2Fゾーン"
     if upper == "OP":
         return "OP"
     if upper.startswith("ETC"):
         return text
 
     translated = text
-    translated = translated.replace("카운터", "カウンター / Counter")
+    translated = translated.replace("카운터", "カウンター")
     translated = translated.replace("유동", "OP")
-    translated = translated.replace("PHOTO", "フォト / Photo")
+    translated = translated.replace("PHOTO", "フォト")
     return translated
 
 def to_display_value(value):
@@ -979,18 +979,18 @@ if 'result_df' in st.session_state:
         if display_value:
             display_to_raw[display_value] = raw_value
     display_df = raw_display_df.map(to_display_value)
-    display_df.index.name = "Employee / 氏名"
+    display_df.index.name = "氏名"
     editor_df = display_df.reset_index()
-    editor_df = editor_df[["Employee / 氏名"] + [c for c in editor_df.columns if c != "Employee / 氏名"]]
+    editor_df = editor_df[["氏名"] + [c for c in editor_df.columns if c != "氏名"]]
     zone_choices = set(display_to_raw.keys())
     zone_choices.update(str(val).strip() for val in display_df.values.flatten() if str(val).strip())
     zone_choices.update(to_display_value(val) for val in ["식사", "2回目休憩", "도슨트", "1층 유동", "2층 유동", "-", ""])
     zone_choices = sorted(choice for choice in zone_choices if choice != "")
     column_settings = {
         col: (
-            st.column_config.SelectboxColumn(options=zone_choices)
-            if col != "Employee / 氏名"
-            else st.column_config.TextColumn(label="Employee / 氏名", disabled=True)
+            st.column_config.SelectboxColumn(options=zone_choices, width="small")
+            if col != "氏名"
+            else st.column_config.TextColumn(label="氏名", disabled=True, width="medium")
         )
         for col in editor_df.columns
     }
@@ -1004,9 +1004,9 @@ if 'result_df' in st.session_state:
         key="rotation_editor",
     )
     edited_display_df = edited_editor_df.copy()
-    edited_display_df["Employee / 氏名"] = edited_display_df["Employee / 氏名"].astype(str).str.strip()
-    edited_display_df = edited_display_df.set_index("Employee / 氏名")
-    edited_display_df.index.name = "Employee / 氏名"
+    edited_display_df["氏名"] = edited_display_df["氏名"].astype(str).str.strip()
+    edited_display_df = edited_display_df.set_index("氏名")
+    edited_display_df.index.name = "氏名"
     edited_display_df = edited_display_df.reindex(columns=display_df.columns)
     edited_display_df = edited_display_df.map(normalize_schedule_value)
     edited_raw_df = edited_display_df.map(lambda value: display_to_raw.get(str(value).strip(), normalize_schedule_value(value)))
@@ -1014,7 +1014,7 @@ if 'result_df' in st.session_state:
     edited_raw_df.index.name = "직원명"
     edited_raw_df = enforce_priority_slots(edited_raw_df)
     edited_display_df = edited_raw_df.map(to_display_value)
-    edited_display_df.index.name = "Employee / 氏名"
+    edited_display_df.index.name = "氏名"
     csv_bytes = edited_display_df.to_csv(index=True).encode('utf-8-sig')
     file_name = f"rotation_{STORE_NAME}_{date.today():%Y%m%d}"
 
@@ -1158,7 +1158,7 @@ if 'result_df' in st.session_state:
 
     def build_table(df):
         table_html = "<div class='table-scroll'><table class='rotation-table'>"
-        table_html += "<thead><tr><th>氏名 / Employee</th>"
+        table_html += "<thead><tr><th>氏名</th>"
         for time in df.columns:
             table_html += f"<th>{escape(str(time))}</th>"
         table_html += "</tr></thead><tbody>"
@@ -1185,7 +1185,7 @@ if 'result_df' in st.session_state:
 
     def build_zone_coverage_table(coverage_rows, time_slots):
         table_html = "<div class='table-scroll coverage-scroll'><table class='rotation-table coverage-table'>"
-        table_html += "<thead><tr><th>ゾーン / Zone</th>"
+        table_html += "<thead><tr><th>ゾーン</th>"
         for slot in time_slots:
             table_html += f"<th>{escape(str(slot))}</th>"
         table_html += "</tr></thead><tbody>"
@@ -1220,20 +1220,20 @@ if 'result_df' in st.session_state:
     table_styles = (
         "<style>"
         ".table-scroll{overflow:auto;background:#fff;border:1px solid #ddd;border-radius:12px;}"
-        ".rotation-table{width:max-content;min-width:100%;border-collapse:collapse;font-size:0.95rem;}"
-        ".rotation-table th,.rotation-table td{border:1px solid #ddd;padding:8px;text-align:center;vertical-align:middle;white-space:nowrap;}"
+        ".rotation-table{width:max-content;min-width:100%;border-collapse:collapse;font-size:0.82rem;line-height:1.15;}"
+        ".rotation-table th,.rotation-table td{border:1px solid #ddd;padding:5px 6px;text-align:center;vertical-align:middle;white-space:nowrap;min-width:58px;}"
         ".rotation-table thead th{position:sticky;top:0;background:#f8f9fa;z-index:3;}"
-        ".rotation-table .staff-name{position:sticky;left:0;background:#fff;font-weight:700;z-index:2;}"
+        ".rotation-table .staff-name{position:sticky;left:0;background:#fff;font-weight:700;z-index:2;min-width:122px;max-width:122px;}"
         ".rotation-table thead th:first-child{left:0;z-index:4;}"
         ".coverage-scroll{margin:12px 0 20px;}"
         ".coverage-table .zone-name{font-weight:700;color:#111827;}"
-        ".coverage-cell{min-width:88px;background:#ffffff;}"
+        ".coverage-cell{min-width:72px;background:#ffffff;}"
         ".coverage-cell.inactive{background:#f8fafc;color:#94a3b8;}"
         ".coverage-cell.filled{background:#f0fdf4;}"
         ".coverage-cell.partial{border:2px solid #eab308 !important;background:#fef9c3;}"
         ".coverage-cell.empty{border:2px solid #dc2626 !important;background:#fff1f2;}"
-        ".coverage-assigned{font-size:0.95rem;font-weight:700;color:#111827;}"
-        ".coverage-required{margin-top:4px;font-size:0.78rem;color:#64748b;}"
+        ".coverage-assigned{font-size:0.84rem;font-weight:700;color:#111827;}"
+        ".coverage-required{margin-top:3px;font-size:0.68rem;color:#64748b;}"
         "</style>"
     )
     coverage_rows, total_empty_zones, total_remaining_to, affected_times = build_zone_coverage_summary(edited_raw_df)
@@ -1243,8 +1243,12 @@ if 'result_df' in st.session_state:
     page_html += (
         "<style>"
         "html,body{height:100%;margin:0;padding:0;background:#f8fafc;font-family:'Pretendard','Noto Sans KR',sans-serif;}"
-        ".page-wrap{display:flex;flex-direction:column;height:100%;padding:16px;box-sizing:border-box;gap:12px;}"
-        "h1{margin:0;font-size:1.4rem;}"
+        ".page-wrap{display:flex;flex-direction:column;height:100%;padding:10px;box-sizing:border-box;gap:8px;}"
+        "h1{margin:0;font-size:1.05rem;}"
+        ".table-scroll{overflow:visible;border-radius:10px;}"
+        ".rotation-table{font-size:0.74rem;table-layout:fixed;}"
+        ".rotation-table th,.rotation-table td{padding:4px 5px;min-width:50px;}"
+        ".rotation-table .staff-name{min-width:112px;max-width:112px;}"
         "</style>"
         f"{table_styles}"
     )
