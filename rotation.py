@@ -1284,6 +1284,7 @@ if 'result_df' in st.session_state:
         "</script>"
         "</body></html>"
     )
+    safe_page_html = page_html.replace("</script>", "<\\/script>")
 
     widget_html = f"""
     <div style='margin-bottom:8px;'>
@@ -1291,7 +1292,7 @@ if 'result_df' in st.session_state:
                 onclick='openLargeRotation()'>🖥️ 拡大表示 / Open large view</button>
     </div>
     <script>
-    const largeRotationContent = {json.dumps(page_html)};
+    const largeRotationContent = {json.dumps(safe_page_html)};
     function openLargeRotation() {{
         const win = window.open('', '_blank');
         if (!win) return;
