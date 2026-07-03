@@ -25,18 +25,12 @@ st.caption("フロアスケジュール / Floor schedule")
 # 🔗 AOYAMA 전용 시트 설정
 STORE_NAME = "GENTLEMONSTER AOYAMA"
 SHEET_ID = "1XcXSvokpLlkWnTQtqs-Zlz6lLISXJ9Zy14kEOIOUGlA"
-DAY_TYPES = {
-    "평일": {"DB_GID": "0", "TO_GID": "410487706"},
-    "주말": {"DB_GID": "0", "TO_GID": "2126973547"},
-}
-DAY_TYPE_LABELS = {
-    "평일": "平日 / Weekday",
-    "주말": "週末 / Weekend",
-}
+DB_SHEET_GID = "0"
+TO_SHEET_GID = "410487706"
 RAW_TO_DISPLAY = {
     "식사": "休憩 / Meal",
     "2回目休憩": "2回目休憩 / 2nd Break",
-    "도슨트": "ETC / Docent",
+    "도슨트": "ETC",
     "1층 유동": "1F-流動 / 1F Float",
     "2층 유동": "2F-流動 / 2F Float",
 }
@@ -58,15 +52,6 @@ MEAL_DURATION_MINUTES = 60
 SECOND_BREAK_DURATION_MINUTES = 30
 
 st.sidebar.markdown(f"**🏠 {STORE_NAME}**")
-selected_day_type = st.sidebar.radio(
-    "📅 営業区分 / Day Type",
-    ["평일", "주말"],
-    horizontal=True,
-    format_func=lambda key: DAY_TYPE_LABELS.get(key, key),
-)
-day_type_config = DAY_TYPES[selected_day_type]
-DB_SHEET_GID = day_type_config["DB_GID"]
-TO_SHEET_GID = day_type_config["TO_GID"]
 
 def load_sheet_data(sheet_id, gid=None, sheet_name=None, show_errors=True):
     if sheet_name:
@@ -120,29 +105,10 @@ def count_staff_rows(data):
     return count
 
 db_df = load_sheet_data(SHEET_ID, DB_SHEET_GID)
-db_source_label = selected_day_type
-db_staff_count = count_staff_rows(db_df)
-if db_staff_count == 0:
-    fallback_day_type = next((day_type for day_type in DAY_TYPES if day_type != selected_day_type), None)
-    if fallback_day_type:
-        fallback_gid = DAY_TYPES[fallback_day_type]["DB_GID"]
-        fallback_db_df = load_sheet_data(SHEET_ID, fallback_gid)
-        fallback_staff_count = count_staff_rows(fallback_db_df)
-        if fallback_staff_count > 0:
-            db_df = fallback_db_df
-            db_source_label = fallback_day_type
-            db_staff_count = fallback_staff_count
-
 to_df = load_sheet_data(SHEET_ID, TO_SHEET_GID)
 docent_df = load_first_available_sheet(SHEET_ID, ["도슨트", "ドーセント", "Docent"])
 
 if db_df.empty: st.stop()
-if db_source_label != selected_day_type:
-    st.warning(
-        f"選択した{DAY_TYPE_LABELS.get(selected_day_type, selected_day_type)}のDBに出勤データがなかったため、"
-        f"{DAY_TYPE_LABELS.get(db_source_label, db_source_label)}のDBを代わりに使用しています / "
-        f"No active staff rows were found in the selected DB, so the app is temporarily using the {DAY_TYPE_LABELS.get(db_source_label, db_source_label)} DB."
-    )
 
 def get_clean_time(val):
     val = str(val).strip()
@@ -242,7 +208,7 @@ def translate_zone_name(zone_name):
     if upper == "OP":
         return "OP / Float"
     if upper.startswith("ETC"):
-        return f"{text} / Docent"
+        return text
 
     translated = text
     translated = translated.replace("카운터", "カウンター / Counter")
@@ -335,7 +301,7 @@ def get_special_zone_group(zone_name):
 
 def is_docent_assignment(value):
     text = str(value).strip()
-    return text in {"도슨트", "ドーセント", "ETC / Docent"} or text.upper().startswith("ETC")
+    return text in {"도슨트", "ドーセント", "ETC"} or text.upper().startswith("ETC")
 
 def normalize_schedule_value(value):
     text = str(value)
@@ -449,14 +415,14 @@ docent_schedule = get_docent_schedule(raw_staff, docent_df)
 
 # --- 사이드바: 파트타이머 상세 조정 ---
 st.sidebar.header("🕹️ 人員管理 / Staffing")
-use_docent_schedule = st.sidebar.checkbox("🎤 ドーセント予定を反映 / Apply docent schedule", value=True)
-with st.sidebar.expander("🎤 ドーセントタブ / Docent tab", expanded=False):
-    st.caption("`도슨트`, `ドーセント`, `ETC1/2/3` 列を自動認識します / Automatically detects docent columns including ETC1/2/3.")
+use_docent_schedule = st.sidebar.checkbox("🎤 ETC予定を反映 / Apply ETC schedule", value=True)
+with st.sidebar.expander("🎤 ETCタブ / ETC tab", expanded=False):
+    st.caption("`ETC1`, `ETC2`, `ETC3` 列を自動認識します / Automatically detects ETC1/2/3 columns.")
     if docent_schedule:
         for docent_name, docent_times in sorted(docent_schedule.items()):
             st.write(f"{docent_name}: {', '.join(docent_times)}")
     else:
-        st.caption("選択した平日/週末DBにドーセント時間の記録がありません / No docent times found for the selected day type.")
+        st.caption("ETC時間の記録がありません / No ETC times found.")
 
 pt_list = [s for s in raw_staff if s['type'] == '파트']
 
@@ -471,7 +437,6 @@ pt_input_defaults = {
 pt_input_signature = json.dumps(
     {
         "store": STORE_NAME,
-        "day_type": selected_day_type,
         "defaults": pt_input_defaults,
     },
     ensure_ascii=False,
@@ -605,7 +570,6 @@ assign_second_breaks(final_staff_configs)
 config_signature = json.dumps(
     {
         "store": STORE_NAME,
-        "day_type": selected_day_type,
         "staff": [
             {
                 "name": s["display_name"],
@@ -968,7 +932,7 @@ if st.sidebar.button("🚀 ローテーション自動生成 / Generate rotation
 # --- 화면 출력 ---
 if 'result_df' in st.session_state:
     res = st.session_state.result_df
-    st.write(f"### 📅 [{STORE_NAME} / {DAY_TYPE_LABELS.get(selected_day_type, selected_day_type)}] フロアローテーション / Floor rotation")
+    st.write(f"### 📅 [{STORE_NAME}] フロアローテーション / Floor rotation")
     st.caption("下の表で修正すると、下部の共有ボードにすぐ反映されます / Edits below are reflected immediately in the shared board preview.")
     raw_display_df = res.transpose().map(normalize_schedule_value)
     raw_display_df.index.name = "직원명"
@@ -1015,8 +979,7 @@ if 'result_df' in st.session_state:
     edited_display_df = edited_raw_df.map(to_display_value)
     edited_display_df.index.name = "Employee / 氏名"
     csv_bytes = edited_display_df.to_csv(index=True).encode('utf-8-sig')
-    day_type_slug = "weekday" if selected_day_type == "평일" else "weekend"
-    file_name = f"rotation_{STORE_NAME}_{day_type_slug}_{date.today():%Y%m%d}"
+    file_name = f"rotation_{STORE_NAME}_{date.today():%Y%m%d}"
 
     def parse_required_count(raw_value):
         raw = str(raw_value).strip()
