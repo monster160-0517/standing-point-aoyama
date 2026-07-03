@@ -696,6 +696,7 @@ def run_rotation():
     MAX_W_HOURS = 4
     MAX_CONSECUTIVE_COUNTER_HOURS = 2
     MAX_SAME_FLOOR_SLOTS = 4
+    MAX_OP_ASSIGNMENTS_PER_SLOT = 1
 
     expanded_to_rows = build_expanded_to_rows(to_df)
     counter_eligible_slot_capacity = {}
@@ -811,11 +812,18 @@ def run_rotation():
         counter_pass = []
         other_first_pass = []
         other_extra_pass = []
+        flex_capacity_used = 0
 
         for zone_name in all_zones:
             capacity = parse_zone_capacity(to_row[zone_name])
             if capacity <= 0 or is_docent_zone(zone_name):
                 continue
+            if is_flexible_zone(zone_name):
+                remaining_flex_capacity = MAX_OP_ASSIGNMENTS_PER_SLOT - flex_capacity_used
+                capacity = min(capacity, remaining_flex_capacity)
+                if capacity <= 0:
+                    continue
+                flex_capacity_used += capacity
             if is_counter_zone(zone_name):
                 counter_pass.extend([zone_name] * capacity)
             else:
@@ -914,11 +922,19 @@ def run_rotation():
         if to_row is not None:
             zone_assignment_plan = build_zone_assignment_plan(to_row)
             zone_assigned_count = {}
-            zone_required_capacity = {
-                z: parse_zone_capacity(to_row[z])
-                for z in all_zones
-                if parse_zone_capacity(to_row[z]) > 0 and not is_docent_zone(z)
-            }
+            zone_required_capacity = {}
+            flex_capacity_used = 0
+            for z in all_zones:
+                required_capacity = parse_zone_capacity(to_row[z])
+                if required_capacity <= 0 or is_docent_zone(z):
+                    continue
+                if is_flexible_zone(z):
+                    remaining_flex_capacity = MAX_OP_ASSIGNMENTS_PER_SLOT - flex_capacity_used
+                    required_capacity = min(required_capacity, remaining_flex_capacity)
+                    if required_capacity <= 0:
+                        continue
+                    flex_capacity_used += required_capacity
+                zone_required_capacity[z] = required_capacity
 
             locked_names = [name for name in list(pool) if assignment_locks.get(name)]
             for locked_name in locked_names:
@@ -966,8 +982,13 @@ def run_rotation():
 
             flexible_pool = [n for n in pool if staff_lookup[n]["can_flexible"]]
             inflexible_pool = [n for n in pool if not staff_lookup[n]["can_flexible"]]
+            assigned_flexible_count = sum(
+                count for zone_name, count in zone_assigned_count.items()
+                if is_flexible_zone(zone_name)
+            )
 
-            for n in flexible_pool: # TO 시트에 있는 유동 구역만 사용
+            remaining_flexible_capacity = max(MAX_OP_ASSIGNMENTS_PER_SLOT - assigned_flexible_count, 0)
+            for n in flexible_pool[:remaining_flexible_capacity]: # TO 시트에 있는 유동 구역만 사용
                 if not flex_1f and not flex_2f:
                     # 유동 구역 자체가 없으면 미배정
                     schedule_df.at[slot, n] = "-"
@@ -1002,6 +1023,13 @@ def run_rotation():
                 previous_assignments[n] = flexible_zone
                 record_zone_assignment(n, flexible_zone)
                 update_floor_state(n, flexible_zone)
+
+            for n in flexible_pool[remaining_flexible_capacity:]:
+                schedule_df.at[slot, n] = "-"
+                previous_assignments[n] = None
+                floor_state[n]["floor"] = None
+                floor_state[n]["count"] = 0
+                counter_consecutive_hours[n] = 0
 
             for n in inflexible_pool:
                 schedule_df.at[slot, n] = "-"
