@@ -1283,10 +1283,10 @@ if 'result_df' in st.session_state:
     page_html += (
         "<style>"
         "html,body{height:100%;margin:0;padding:0;background:#f8fafc;font-family:'Pretendard','Noto Sans KR',sans-serif;overflow:hidden;}"
-        ".page-wrap{display:flex;flex-direction:column;height:100vh;padding:8px;box-sizing:border-box;gap:6px;overflow:hidden;}"
-        "h1{margin:0;font-size:0.95rem;line-height:1.1;flex:0 0 auto;}"
-        ".fit-stage{flex:1 1 auto;display:flex;justify-content:center;align-items:flex-start;overflow:hidden;border-radius:10px;}"
-        ".fit-frame{position:relative;flex:0 0 auto;}"
+        ".page-wrap{height:100vh;padding:8px;box-sizing:border-box;overflow:hidden;}"
+        ".page-title{margin:0 0 8px;text-align:center;font-size:0.95rem;line-height:1.1;}"
+        ".fit-stage{width:100%;height:calc(100vh - 44px);overflow:hidden;border-radius:10px;}"
+        ".fit-frame{position:relative;margin:0 auto;}"
         ".fit-content{position:absolute;top:0;left:0;transform-origin:top left;}"
         ".table-scroll{overflow:visible;border-radius:10px;box-shadow:none;}"
         ".rotation-table{font-size:0.7rem;table-layout:fixed;background:#fff;}"
@@ -1299,7 +1299,7 @@ if 'result_df' in st.session_state:
     )
     page_html += (
         "</head><body><div class='page-wrap'>"
-        "<h1>モバイル共有ボード / Mobile share board</h1>"
+        "<h1 class='page-title'>モバイル共有ボード / Mobile share board</h1>"
         "<div class='fit-stage'><div class='fit-frame' id='fit-frame'><div class='fit-content' id='fit-content'>"
     )
     page_html += table_html
@@ -1314,11 +1314,10 @@ if 'result_df' in st.session_state:
         "if(!stage||!frame||!content||!table)return;"
         "content.style.transform='scale(1)';"
         "const stageWidth=Math.max(stage.clientWidth-4,1);"
-        "const stageHeight=Math.max(stage.clientHeight-4,1);"
         "const tableWidth=table.offsetWidth;"
         "const tableHeight=table.offsetHeight;"
         "if(!tableWidth||!tableHeight)return;"
-        "const scale=Math.min(stageWidth/tableWidth, stageHeight/tableHeight, 1);"
+        "const scale=Math.min(stageWidth/tableWidth, 1);"
         "frame.style.width=(tableWidth*scale)+'px';"
         "frame.style.height=(tableHeight*scale)+'px';"
         "content.style.transform='scale('+scale+')';"
