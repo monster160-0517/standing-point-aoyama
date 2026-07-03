@@ -663,6 +663,9 @@ def run_rotation():
         special_group = get_special_zone_group(zone_name)
         zone_identity = get_zone_identity(zone_name)
 
+        if previous_assignments.get(name) == zone_name:
+            return False
+
         if special_group:
             previous_zone = special_zone_history[name].get(special_group)
             if previous_zone and previous_zone != zone_identity:
@@ -811,16 +814,19 @@ def run_rotation():
         for s in final_staff_configs:
             if slot in s["meals"]:
                 schedule_df.at[slot, s['display_name']] = "식사"
+                previous_assignments[s['display_name']] = None
                 floor_state[s['display_name']]['floor'] = None
                 floor_state[s['display_name']]['count'] = 0
                 counter_consecutive_hours[s['display_name']] = 0
             elif slot in s.get("second_breaks", []):
                 schedule_df.at[slot, s['display_name']] = "2回目休憩"
+                previous_assignments[s['display_name']] = None
                 floor_state[s['display_name']]['floor'] = None
                 floor_state[s['display_name']]['count'] = 0
                 counter_consecutive_hours[s['display_name']] = 0
             elif slot in s.get("docent_times", []):
                 schedule_df.at[slot, s['display_name']] = "도슨트"
+                previous_assignments[s['display_name']] = None
                 floor_state[s['display_name']]['floor'] = None
                 floor_state[s['display_name']]['count'] = 0
                 counter_consecutive_hours[s['display_name']] = 0
@@ -828,6 +834,7 @@ def run_rotation():
                 pool.append(s['display_name'])
             else:
                 schedule_df.at[slot, s['display_name']] = " "
+                previous_assignments[s['display_name']] = None
                 floor_state[s['display_name']]['floor'] = None
                 floor_state[s['display_name']]['count'] = 0
                 counter_consecutive_hours[s['display_name']] = 0
