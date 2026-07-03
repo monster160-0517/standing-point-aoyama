@@ -31,8 +31,8 @@ RAW_TO_DISPLAY = {
     "식사": "休憩 / Meal",
     "2回目休憩": "2回目休憩 / 2nd Break",
     "도슨트": "ETC",
-    "1층 유동": "1F-流動 / 1F Float",
-    "2층 유동": "2F-流動 / 2F Float",
+    "1층 유동": "1F-OP",
+    "2층 유동": "2F-OP",
 }
 COLUMN_ALIASES = {
     "name": ["이름", "氏名", "名前", "Name"],
@@ -206,13 +206,13 @@ def translate_zone_name(zone_name):
     if upper == "2F":
         return "2Fゾーン / 2F Zone"
     if upper == "OP":
-        return "OP / Float"
+        return "OP"
     if upper.startswith("ETC"):
         return text
 
     translated = text
     translated = translated.replace("카운터", "カウンター / Counter")
-    translated = translated.replace("유동", "流動 / Float")
+    translated = translated.replace("유동", "OP")
     translated = translated.replace("PHOTO", "フォト / Photo")
     return translated
 
