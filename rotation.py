@@ -35,6 +35,7 @@ DAY_TYPE_LABELS = {
 }
 RAW_TO_DISPLAY = {
     "식사": "休憩 / Meal",
+    "2回目休憩": "2回目休憩 / 2nd Break",
     "도슨트": "ETC / Docent",
     "1층 유동": "1F-流動 / 1F Float",
     "2층 유동": "2F-流動 / 2F Float",
@@ -46,11 +47,15 @@ COLUMN_ALIASES = {
     "end_time": ["퇴근시간", "退勤時間", "End Time"],
     "lunch": ["점심", "昼休憩", "Lunch"],
     "dinner": ["저녁", "夕方休憩", "Dinner"],
-    "meal_time": ["식사시간", "食事時間", "Meal Time"],
-    "counter_flag": ["카운터여부", "カウンター可否", "Counter Eligible"],
-    "flex_flag": ["유동여부", "流動可否", "Float Eligible", "OP"],
+    "meal_time": ["식사시간", "食事時間", "食事時間1H", "Meal Time"],
+    "second_break": ["2回目休憩", "第二休憩", "Second Break"],
+    "counter_flag": ["카운터여부", "カウンター可否", "レジ可能有無", "Counter Eligible"],
+    "flex_flag": ["유동여부", "流動可否", "OP可能有無", "Float Eligible", "OP"],
 }
 DOCENT_COLUMN_TOKENS = ["도슨트", "ドーセント", "DOCENT", "Docent", "ETC"]
+TIME_SLOT_STEP_MINUTES = 30
+MEAL_DURATION_MINUTES = 60
+SECOND_BREAK_DURATION_MINUTES = 30
 
 st.sidebar.markdown(f"**🏠 {STORE_NAME}**")
 selected_day_type = st.sidebar.radio(
@@ -113,6 +118,7 @@ def get_clean_time(val):
         return None
 
     hour = int(nums[0])
+    minute = int(nums[1]) if len(nums) > 1 else 0
     lower_val = val.lower()
     is_pm = "오후" in val or "pm" in lower_val
     is_am = "오전" in val or "am" in lower_val
@@ -122,22 +128,58 @@ def get_clean_time(val):
     elif is_am and hour == 12:
         hour = 0
 
-    return f"{hour:02d}:00"
+    return f"{hour:02d}:{minute:02d}"
 
-def get_hour_from_time(val, default=None):
+def get_minutes_from_time(val, default=None):
     clean = get_clean_time(val)
     if not clean:
         return default
-    return int(clean.split(":")[0])
+    hour, minute = clean.split(":")
+    return int(hour) * 60 + int(minute)
 
-def build_work_range(in_val, out_val, default_in=11, default_out=21):
-    in_hr = get_hour_from_time(in_val, default_in)
-    out_hr = get_hour_from_time(out_val, default_out)
-    if in_hr is None or out_hr is None:
+def minutes_to_time(total_minutes):
+    hour = total_minutes // 60
+    minute = total_minutes % 60
+    return f"{hour:02d}:{minute:02d}"
+
+def align_to_step(total_minutes, step_minutes=TIME_SLOT_STEP_MINUTES):
+    remainder = total_minutes % step_minutes
+    if remainder == 0:
+        return total_minutes
+    return total_minutes + (step_minutes - remainder)
+
+def build_slot_range(start_minutes, end_minutes, step_minutes=TIME_SLOT_STEP_MINUTES):
+    if start_minutes is None or end_minutes is None or end_minutes <= start_minutes:
+        return []
+    return [minutes_to_time(minute) for minute in range(start_minutes, end_minutes, step_minutes)]
+
+def build_duration_slots(start_time, duration_minutes):
+    start_minutes = get_minutes_from_time(start_time)
+    if start_minutes is None:
+        return []
+    end_minutes = start_minutes + duration_minutes
+    return build_slot_range(start_minutes, end_minutes)
+
+def build_expanded_to_rows(source_df):
+    expanded_rows = {}
+    if source_df.empty:
+        return expanded_rows
+    for _, row in source_df.iterrows():
+        base_minutes = get_minutes_from_time(row.iloc[0])
+        if base_minutes is None:
+            continue
+        expanded_rows[minutes_to_time(base_minutes)] = row
+        expanded_rows[minutes_to_time(base_minutes + TIME_SLOT_STEP_MINUTES)] = row
+    return expanded_rows
+
+def build_work_range(in_val, out_val, default_in=None, default_out=None):
+    in_minutes = get_minutes_from_time(in_val, default_in)
+    out_minutes = get_minutes_from_time(out_val, default_out)
+    if in_minutes is None or out_minutes is None:
         return None, None, None
-    if out_hr <= in_hr:
-        return None, in_hr, out_hr
-    return range(in_hr, out_hr), in_hr, out_hr
+    if out_minutes <= in_minutes:
+        return None, in_minutes, out_minutes
+    return set(build_slot_range(in_minutes, out_minutes)), in_minutes, out_minutes
 
 def parse_time_list(value):
     text = str(value).strip()
@@ -157,6 +199,12 @@ def translate_zone_name(zone_name):
         return text
 
     upper = text.upper()
+    if upper == "COUNTER":
+        return "カウンター / Counter"
+    if upper == "1F":
+        return "1Fゾーン / 1F Zone"
+    if upper == "2F":
+        return "2Fゾーン / 2F Zone"
     if upper == "OP":
         return "OP / Float"
     if upper.startswith("ETC"):
@@ -303,6 +351,7 @@ def get_initial_staff(data):
     lunch_col = find_column(data.columns, COLUMN_ALIASES["lunch"], "점심")
     dinner_col = find_column(data.columns, COLUMN_ALIASES["dinner"], "저녁")
     meal_col = find_column(data.columns, COLUMN_ALIASES["meal_time"], "식사시간")
+    second_break_col = find_column(data.columns, COLUMN_ALIASES["second_break"], "2回目休憩")
     counter_col = find_column(data.columns, COLUMN_ALIASES["counter_flag"], "카운터여부")
     flex_col = find_column(data.columns, COLUMN_ALIASES["flex_flag"], "유동여부")
     docent_cols = find_docent_columns(data.columns)
@@ -322,6 +371,7 @@ def get_initial_staff(data):
                 "meal1": get_clean_time(row.get(lunch_col, '')),
                 "meal2": get_clean_time(row.get(dinner_col, '')),
                 "meal_p": get_clean_time(row.get(meal_col, '')),
+                "second_break_override": get_clean_time(row.get(second_break_col, '')),
                 "can_counter": is_enabled_flag(row.get(counter_col, 'X')),
                 "can_flexible": is_enabled_flag(row.get(flex_col, 'X')),
                 "docent_times": sorted(set(docent_times)),
@@ -378,9 +428,9 @@ pt_list = [s for s in raw_staff if s['type'] == '파트']
 
 pt_input_defaults = {
     s["original_name"]: {
-        "in": s["in"] or "11:00",
-        "out": s["out"] or "21:00",
-        "meal": s["meal_p"] or "12:00",
+        "in": s["in"] or "",
+        "out": s["out"] or "",
+        "meal": s["meal_p"] or "",
     }
     for s in pt_list
 }
@@ -401,29 +451,38 @@ if st.session_state.get("pt_input_signature") != pt_input_signature:
         st.session_state[f"meal_{pt_name}"] = defaults["meal"]
     st.session_state["pt_input_signature"] = pt_input_signature
 
+default_pt_names = [s['original_name'] for s in pt_list if s.get('in') and s.get('out')]
 selected_pt_names = st.sidebar.multiselect(
     "⏱️ 出勤アルバイト選択 / Select part-timers on duty",
     [s['original_name'] for s in pt_list],
-    default=[s['original_name'] for s in pt_list],
+    default=default_pt_names,
 )
 
 final_staff_configs = []
 
 # 1. 정직원 처리 (조 이름 포함)
 for s in [x for x in raw_staff if x['type'] == '정직']:
-    work_range, in_hr, out_hr = build_work_range(s['in'], s['out'])
+    work_range, in_minutes, out_minutes = build_work_range(s['in'], s['out'])
     if work_range is None:
         continue
-    tag = "(A Shift)" if in_hr <= 10 else "(B Shift)"
+    tag = "(A Shift)" if in_minutes <= 10 * 60 else "(B Shift)"
     s['display_name'] = f"{s['original_name']}{tag}"
     if s.get('meal_p'):
-        s['meals'] = [s['meal_p']]
+        s['meals'] = build_duration_slots(s['meal_p'], MEAL_DURATION_MINUTES)
     else:
-        s['meals'] = list(set([m for m in [s['meal1'], s['meal2']] if m]))
+        meal_slots = []
+        for meal_time in [s['meal1'], s['meal2']]:
+            meal_slots.extend(build_duration_slots(meal_time, MEAL_DURATION_MINUTES))
+        s['meals'] = sorted(set(meal_slots), key=lambda value: get_minutes_from_time(value, 0))
+    s['first_meal_time'] = s.get('meal_p') or s.get('meal1') or s.get('meal2')
     s['docent_times'] = docent_schedule.get(s['original_name'], []) if use_docent_schedule else []
     s['work_range'] = work_range
-    s['in'] = f"{in_hr:02d}:00"
-    s['out'] = f"{out_hr:02d}:00"
+    s['work_start_minutes'] = in_minutes
+    s['work_end_minutes'] = out_minutes
+    s['second_break_override'] = s.get('second_break_override')
+    s['second_breaks'] = []
+    s['in'] = minutes_to_time(in_minutes)
+    s['out'] = minutes_to_time(out_minutes)
     final_staff_configs.append(s)
 
 # 2. 파트타이머 처리 (조 이름 제외 + 사이드바 조정값 반영)
@@ -439,20 +498,75 @@ if selected_pt_names:
             new_meal = st.text_input("食事 / Meal", key=f"meal_{pt_name}")
 
             pt_copy = pt_origin.copy()
-            work_range, in_hr, out_hr = build_work_range(new_in, new_out)
+            work_range, in_minutes, out_minutes = build_work_range(new_in, new_out)
 
             if work_range is None:
                 st.warning(f"{pt_name}: 出勤/退勤時間を再確認してください / Please check the in/out times.")
                 continue
 
             pt_copy['display_name'] = pt_name # 조 태그 없음
-            pt_copy['in'] = f"{in_hr:02d}:00"
-            pt_copy['out'] = f"{out_hr:02d}:00"
+            pt_copy['in'] = minutes_to_time(in_minutes)
+            pt_copy['out'] = minutes_to_time(out_minutes)
             pt_copy['meal_p'] = get_clean_time(new_meal)
-            pt_copy['meals'] = [pt_copy['meal_p']] if pt_copy['meal_p'] else []
+            pt_copy['meals'] = build_duration_slots(pt_copy['meal_p'], MEAL_DURATION_MINUTES)
+            pt_copy['first_meal_time'] = pt_copy['meal_p']
             pt_copy['docent_times'] = docent_schedule.get(pt_copy['original_name'], []) if use_docent_schedule else []
             pt_copy['work_range'] = work_range
+            pt_copy['work_start_minutes'] = in_minutes
+            pt_copy['work_end_minutes'] = out_minutes
+            pt_copy['second_break_override'] = pt_copy.get('second_break_override')
+            pt_copy['second_breaks'] = []
             final_staff_configs.append(pt_copy)
+
+def assign_second_breaks(staff_configs):
+    meal_groups = {}
+    for staff in staff_configs:
+        staff['second_breaks'] = []
+        first_meal_time = staff.get('first_meal_time')
+        if first_meal_time:
+            meal_groups.setdefault(first_meal_time, []).append(staff)
+
+    if not meal_groups:
+        return
+
+    last_first_meal_end = max(
+        get_minutes_from_time(meal_time, 0) + MEAL_DURATION_MINUTES
+        for meal_time in meal_groups
+    )
+    cursor_minutes = align_to_step(last_first_meal_end)
+    occupied_break_slots = set()
+
+    def find_break_slot(staff, requested_start_minutes):
+        start_minutes = max(requested_start_minutes, last_first_meal_end)
+        candidate_minutes = align_to_step(start_minutes)
+        while candidate_minutes + SECOND_BREAK_DURATION_MINUTES <= staff.get('work_end_minutes', 0):
+            candidate_slot = minutes_to_time(candidate_minutes)
+            if (
+                candidate_slot in staff.get('work_range', set())
+                and candidate_slot not in staff.get('meals', [])
+                and candidate_slot not in staff.get('docent_times', [])
+                and candidate_slot not in occupied_break_slots
+            ):
+                return candidate_slot
+            candidate_minutes += TIME_SLOT_STEP_MINUTES
+        return None
+
+    for meal_time in sorted(meal_groups, key=lambda value: get_minutes_from_time(value, 0)):
+        for staff in meal_groups[meal_time]:
+            override_slot = staff.get('second_break_override')
+            second_break_slot = None
+            if override_slot:
+                override_minutes = get_minutes_from_time(override_slot)
+                if override_minutes is not None:
+                    second_break_slot = find_break_slot(staff, override_minutes)
+            if second_break_slot is None:
+                second_break_slot = find_break_slot(staff, cursor_minutes)
+            if second_break_slot:
+                staff['second_breaks'] = [second_break_slot]
+                occupied_break_slots.add(second_break_slot)
+                cursor_minutes = get_minutes_from_time(second_break_slot, cursor_minutes) + SECOND_BREAK_DURATION_MINUTES
+
+assign_second_breaks(final_staff_configs)
 
 config_signature = json.dumps(
     {
@@ -465,6 +579,7 @@ config_signature = json.dumps(
                 "in": s.get("in"),
                 "out": s.get("out"),
                 "meals": s.get("meals", []),
+                "second_breaks": s.get("second_breaks", []),
                 "docent_times": s.get("docent_times", []),
                 "can_counter": s.get("can_counter", False),
                 "can_flexible": s.get("can_flexible", False),
@@ -495,12 +610,24 @@ def enforce_priority_slots(df):
         for meal_slot in staff_config.get("meals", []):
             if meal_slot in enforced.columns:
                 enforced.at[staff_name, meal_slot] = "식사"
+        for break_slot in staff_config.get("second_breaks", []):
+            if break_slot in enforced.columns:
+                enforced.at[staff_name, break_slot] = "2回目休憩"
     return enforced
 
 # --- 로테이션 엔진 ---
 def run_rotation():
     working_names = [s['display_name'] for s in final_staff_configs]
-    all_time_slots = [f"{h:02d}:00" for h in range(11, 21)]
+    staff_start_times = [s.get('work_start_minutes') for s in final_staff_configs if s.get('work_start_minutes') is not None]
+    staff_end_times = [s.get('work_end_minutes') for s in final_staff_configs if s.get('work_end_minutes') is not None]
+    to_time_values = [
+        get_minutes_from_time(value)
+        for value in to_df[to_df.columns[0]].tolist()
+        if get_minutes_from_time(value) is not None
+    ]
+    min_schedule_minutes = min(staff_start_times + to_time_values) if (staff_start_times or to_time_values) else 11 * 60
+    max_schedule_minutes = max(staff_end_times + [value + 60 for value in to_time_values]) if (staff_end_times or to_time_values) else 21 * 60
+    all_time_slots = build_slot_range(min_schedule_minutes, max_schedule_minutes)
     schedule_df = pd.DataFrame(index=all_time_slots, columns=working_names).fillna("-")
     all_zones = [c for c in to_df.columns if c != to_df.columns[0]]
 
@@ -518,9 +645,12 @@ def run_rotation():
     counter_assignment_total = {n: 0 for n in working_names}
     counter_zone_assignment_total = {n: {} for n in working_names}
     counter_consecutive_hours = {n: 0 for n in working_names}
-    MAX_1F = 3
-    MAX_W_HOURS = 2
-    MAX_CONSECUTIVE_COUNTER_HOURS = 1
+    MAX_1F = 6
+    MAX_W_HOURS = 4
+    MAX_CONSECUTIVE_COUNTER_HOURS = 2
+    MAX_SAME_FLOOR_SLOTS = 4
+
+    expanded_to_rows = build_expanded_to_rows(to_df)
 
     def get_zone_identity(zone_name):
         return str(zone_name).strip().upper()
@@ -605,7 +735,7 @@ def run_rotation():
         if not floor:
             return True
         state = floor_state[name]
-        return not (state["floor"] == floor and state["count"] >= 2)
+        return not (state["floor"] == floor and state["count"] >= MAX_SAME_FLOOR_SLOTS)
 
     def parse_zone_capacity(raw_value):
         raw = str(raw_value).strip()
@@ -619,7 +749,7 @@ def run_rotation():
         other_extra_pass = []
 
         for zone_name in all_zones:
-            capacity = parse_zone_capacity(to_row[zone_name].iloc[0])
+            capacity = parse_zone_capacity(to_row[zone_name])
             if capacity <= 0 or is_docent_zone(zone_name):
                 continue
             if is_counter_zone(zone_name):
@@ -677,11 +807,15 @@ def run_rotation():
         update_floor_state(chosen_name, zone_name)
 
     for slot in all_time_slots:
-        hr = int(slot.split(":")[0])
         pool = []
         for s in final_staff_configs:
             if slot in s["meals"]:
                 schedule_df.at[slot, s['display_name']] = "식사"
+                floor_state[s['display_name']]['floor'] = None
+                floor_state[s['display_name']]['count'] = 0
+                counter_consecutive_hours[s['display_name']] = 0
+            elif slot in s.get("second_breaks", []):
+                schedule_df.at[slot, s['display_name']] = "2回目休憩"
                 floor_state[s['display_name']]['floor'] = None
                 floor_state[s['display_name']]['count'] = 0
                 counter_consecutive_hours[s['display_name']] = 0
@@ -690,7 +824,7 @@ def run_rotation():
                 floor_state[s['display_name']]['floor'] = None
                 floor_state[s['display_name']]['count'] = 0
                 counter_consecutive_hours[s['display_name']] = 0
-            elif hr in s["work_range"]:
+            elif slot in s["work_range"]:
                 pool.append(s['display_name'])
             else:
                 schedule_df.at[slot, s['display_name']] = " "
@@ -699,15 +833,15 @@ def run_rotation():
                 counter_consecutive_hours[s['display_name']] = 0
         
         random.shuffle(pool)
-        to_row = to_df[to_df[to_df.columns[0]].str.contains(slot, na=False)]
+        to_row = expanded_to_rows.get(slot)
         
-        if not to_row.empty:
+        if to_row is not None:
             zone_assignment_plan = build_zone_assignment_plan(to_row)
             zone_assigned_count = {}
             zone_required_capacity = {
-                z: parse_zone_capacity(to_row[z].iloc[0])
+                z: parse_zone_capacity(to_row[z])
                 for z in all_zones
-                if parse_zone_capacity(to_row[z].iloc[0]) > 0 and not is_docent_zone(z)
+                if parse_zone_capacity(to_row[z]) > 0 and not is_docent_zone(z)
             }
 
             for z in zone_assignment_plan:
@@ -808,7 +942,7 @@ if 'result_df' in st.session_state:
     editor_df = editor_df[["Employee / 氏名"] + [c for c in editor_df.columns if c != "Employee / 氏名"]]
     zone_choices = set(display_to_raw.keys())
     zone_choices.update(str(val).strip() for val in display_df.values.flatten() if str(val).strip())
-    zone_choices.update(to_display_value(val) for val in ["식사", "도슨트", "1층 유동", "2층 유동", "-", ""])
+    zone_choices.update(to_display_value(val) for val in ["식사", "2回目休憩", "도슨트", "1층 유동", "2층 유동", "-", ""])
     zone_choices = sorted(choice for choice in zone_choices if choice != "")
     column_settings = {
         col: (
@@ -854,16 +988,17 @@ if 'result_df' in st.session_state:
         total_empty_zones = 0
         total_remaining_to = 0
         affected_times = set()
+        expanded_to_rows = build_expanded_to_rows(to_df)
 
         active_zones = []
         for zone in zone_columns:
             if is_docent_zone(zone):
                 continue
             for slot in df.columns:
-                to_row = to_df[to_df[to_df.columns[0]].astype(str).str.contains(slot, na=False)]
-                if to_row.empty:
+                to_row = expanded_to_rows.get(slot)
+                if to_row is None:
                     continue
-                required = parse_required_count(to_row[zone].iloc[0])
+                required = parse_required_count(to_row[zone])
                 if required > 0:
                     active_zones.append(zone)
                     break
@@ -872,12 +1007,12 @@ if 'result_df' in st.session_state:
         for zone in active_zones:
             row = {"zone": zone}
             for slot in df.columns:
-                to_row = to_df[to_df[to_df.columns[0]].astype(str).str.contains(slot, na=False)]
-                if to_row.empty:
+                to_row = expanded_to_rows.get(slot)
+                if to_row is None:
                     row[slot] = None
                     continue
 
-                required = parse_required_count(to_row[zone].iloc[0])
+                required = parse_required_count(to_row[zone])
                 if required <= 0:
                     row[slot] = None
                     continue
@@ -932,6 +1067,7 @@ if 'result_df' in st.session_state:
         thin_side = Side(style="thin", color="DDDDDD")
         header_fill = PatternFill(fill_type="solid", fgColor=excel_color("#f8f9fa"))
         meal_fill = PatternFill(fill_type="solid", fgColor=excel_color("#fff5ba"))
+        second_break_fill = PatternFill(fill_type="solid", fgColor=excel_color("#dcfce7"))
         center_alignment = Alignment(horizontal="center", vertical="center")
 
         for cell in ws[1]:
@@ -953,6 +1089,9 @@ if 'result_df' in st.session_state:
 
                 if str(value) in {"식사", "休憩 / Meal"}:
                     cell.fill = meal_fill
+                    continue
+                if str(value) in {"2回目休憩", "2回目休憩 / 2nd Break"}:
+                    cell.fill = second_break_fill
                     continue
                 if is_docent_assignment(value):
                     cell.fill = PatternFill(fill_type="solid", fgColor=excel_color("#fde68a"))
@@ -990,6 +1129,8 @@ if 'result_df' in st.session_state:
                 bg = ""
                 if text in {"식사", "休憩 / Meal"}:
                     bg = "background-color: #fff5ba;"
+                elif text in {"2回目休憩", "2回目休憩 / 2nd Break"}:
+                    bg = "background-color: #dcfce7;"
                 elif is_docent_assignment(text):
                     bg = "background-color: #fde68a;"
                 else:
