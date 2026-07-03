@@ -753,6 +753,12 @@ def run_rotation():
             return 0
         return int(raw.split('-')[0]) if '-' in raw else int(float(raw or 0))
 
+    def should_lock_to_next_half_hour(slot):
+        slot_minutes = get_minutes_from_time(slot)
+        if slot_minutes is None:
+            return False
+        return slot_minutes % 60 == 0
+
     def build_zone_assignment_plan(to_row):
         counter_pass = []
         other_first_pass = []
@@ -815,7 +821,7 @@ def run_rotation():
         zone_assigned_count[zone_name] = zone_assigned_count.get(zone_name, 0) + 1
         pool.remove(chosen_name)
         update_floor_state(chosen_name, zone_name)
-        if create_followup_lock:
+        if create_followup_lock and should_lock_to_next_half_hour(slot):
             assignment_locks[chosen_name] = {"zone": zone_name, "remaining_slots": 1}
         else:
             assignment_locks[chosen_name] = None
