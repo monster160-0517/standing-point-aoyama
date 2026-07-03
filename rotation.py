@@ -35,7 +35,7 @@ DAY_TYPE_LABELS = {
 }
 RAW_TO_DISPLAY = {
     "식사": "休憩 / Meal",
-    "도슨트": "ドーセント / Docent",
+    "도슨트": "ETC / Docent",
     "1층 유동": "1F-流動 / 1F Float",
     "2층 유동": "2F-流動 / 2F Float",
 }
@@ -48,9 +48,9 @@ COLUMN_ALIASES = {
     "dinner": ["저녁", "夕方休憩", "Dinner"],
     "meal_time": ["식사시간", "食事時間", "Meal Time"],
     "counter_flag": ["카운터여부", "カウンター可否", "Counter Eligible"],
-    "flex_flag": ["유동여부", "流動可否", "Float Eligible"],
+    "flex_flag": ["유동여부", "流動可否", "Float Eligible", "OP"],
 }
-DOCENT_COLUMN_TOKENS = ["도슨트", "ドーセント", "DOCENT", "Docent"]
+DOCENT_COLUMN_TOKENS = ["도슨트", "ドーセント", "DOCENT", "Docent", "ETC"]
 
 st.sidebar.markdown(f"**🏠 {STORE_NAME}**")
 selected_day_type = st.sidebar.radio(
@@ -64,7 +64,7 @@ DB_SHEET_GID = day_type_config["DB_GID"]
 TO_SHEET_GID = day_type_config["TO_GID"]
 
 @st.cache_data(ttl=1)
-def load_sheet_data(sheet_id, gid=None, sheet_name=None):
+def load_sheet_data(sheet_id, gid=None, sheet_name=None, show_errors=True):
     if sheet_name:
         encoded_sheet_name = quote(sheet_name)
         url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={encoded_sheet_name}"
@@ -76,12 +76,13 @@ def load_sheet_data(sheet_id, gid=None, sheet_name=None):
         df = df.fillna("").replace(r'\.0$', '', regex=True)
         return df
     except Exception as e:
-        st.error(f"シートの読み込みに失敗しました / Failed to load sheet: {e}")
+        if show_errors:
+            st.error(f"シートの読み込みに失敗しました / Failed to load sheet: {e}")
         return pd.DataFrame()
 
 def load_first_available_sheet(sheet_id, sheet_names):
     for sheet_name in sheet_names:
-        df = load_sheet_data(sheet_id, sheet_name=sheet_name)
+        df = load_sheet_data(sheet_id, sheet_name=sheet_name, show_errors=False)
         if not df.empty:
             return df
     return pd.DataFrame()
@@ -155,6 +156,12 @@ def translate_zone_name(zone_name):
     if not text:
         return text
 
+    upper = text.upper()
+    if upper == "OP":
+        return "OP / Float"
+    if upper.startswith("ETC"):
+        return f"{text} / Docent"
+
     translated = text
     translated = translated.replace("카운터", "カウンター / Counter")
     translated = translated.replace("유동", "流動 / Float")
@@ -173,7 +180,7 @@ def is_counter_zone(zone_name):
 
 def is_flexible_zone(zone_name):
     zone = str(zone_name)
-    return "유동" in zone or "流動" in zone or "FLOAT" in zone.upper()
+    return "유동" in zone or "流動" in zone or "FLOAT" in zone.upper() or str(zone_name).strip().upper() == "OP"
 
 def get_zone_category(zone_name):
     zone = str(zone_name).upper()
@@ -237,7 +244,7 @@ def is_b1_zone(zone_name):
 
 def is_docent_zone(zone_name):
     zone = str(zone_name).strip()
-    return "도슨트" in zone or "ドーセント" in zone or "DOCENT" in zone.upper()
+    return "도슨트" in zone or "ドーセント" in zone or "DOCENT" in zone.upper() or zone.upper().startswith("ETC")
 
 def get_special_zone_group(zone_name):
     if is_w_zone(zone_name):
@@ -245,7 +252,8 @@ def get_special_zone_group(zone_name):
     return None
 
 def is_docent_assignment(value):
-    return str(value).strip() in {"도슨트", "ドーセント", "ドーセント / Docent"}
+    text = str(value).strip()
+    return text in {"도슨트", "ドーセント", "ETC / Docent"} or text.upper().startswith("ETC")
 
 def normalize_schedule_value(value):
     text = str(value)
@@ -302,13 +310,13 @@ def get_initial_staff(data):
     for _, row in data.iterrows():
         name = str(row.get(name_col, "")).strip()
         stype = str(row.get(type_col, "")).strip()
-        if name and any(kw in stype for kw in ['정직', '파트', '正社員', 'アルバイト', 'part', 'full']):
+        if name and any(kw in stype.lower() for kw in ['정직', '파트', '正社員', 'アルバイト', 'part', 'full', 'ft', 'pt']):
             docent_times = []
             for docent_col in docent_cols:
                 docent_times.extend(parse_time_list(row.get(docent_col, "")))
             res.append({
                 "original_name": name,
-                "type": '정직' if any(kw in stype for kw in ['정직', '正社員', 'full']) else '파트',
+                "type": '정직' if any(kw in stype.lower() for kw in ['정직', '正社員', 'full', 'ft']) else '파트',
                 "in": get_clean_time(row.get(start_col, '11')),
                 "out": get_clean_time(row.get(end_col, '21')),
                 "meal1": get_clean_time(row.get(lunch_col, '')),
@@ -359,7 +367,7 @@ docent_schedule = get_docent_schedule(raw_staff, docent_df)
 st.sidebar.header("🕹️ 人員管理 / Staffing")
 use_docent_schedule = st.sidebar.checkbox("🎤 ドーセント予定を反映 / Apply docent schedule", value=True)
 with st.sidebar.expander("🎤 ドーセントタブ / Docent tab", expanded=False):
-    st.caption("`도슨트`, `ドーセント`, `도슨트1/2/3`, `ドーセント1/2/3` 列を自動認識します / Automatically detects docent columns.")
+    st.caption("`도슨트`, `ドーセント`, `ETC1/2/3` 列を自動認識します / Automatically detects docent columns including ETC1/2/3.")
     if docent_schedule:
         for docent_name, docent_times in sorted(docent_schedule.items()):
             st.write(f"{docent_name}: {', '.join(docent_times)}")
@@ -408,7 +416,10 @@ for s in [x for x in raw_staff if x['type'] == '정직']:
         continue
     tag = "(A Shift)" if in_hr <= 10 else "(B Shift)"
     s['display_name'] = f"{s['original_name']}{tag}"
-    s['meals'] = list(set([m for m in [s['meal1'], s['meal2']] if m]))
+    if s.get('meal_p'):
+        s['meals'] = [s['meal_p']]
+    else:
+        s['meals'] = list(set([m for m in [s['meal1'], s['meal2']] if m]))
     s['docent_times'] = docent_schedule.get(s['original_name'], []) if use_docent_schedule else []
     s['work_range'] = work_range
     s['in'] = f"{in_hr:02d}:00"
