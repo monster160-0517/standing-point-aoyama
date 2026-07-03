@@ -649,6 +649,11 @@ def run_rotation():
     MAX_SAME_FLOOR_SLOTS = 4
 
     expanded_to_rows = build_expanded_to_rows(to_df)
+    counter_eligible_slot_capacity = {}
+    for name, staff in staff_lookup.items():
+        unavailable_slots = set(staff.get("meals", [])) | set(staff.get("second_breaks", [])) | set(staff.get("docent_times", []))
+        eligible_slots = [slot for slot in staff.get("work_range", set()) if slot not in unavailable_slots]
+        counter_eligible_slot_capacity[name] = max(len(eligible_slots), 1)
 
     def get_zone_identity(zone_name):
         return str(zone_name).strip().upper()
@@ -702,11 +707,14 @@ def run_rotation():
         random.shuffle(shuffled_candidates)
 
         def counter_score(name):
+            total_capacity = counter_eligible_slot_capacity.get(name, 1)
+            counter_load_ratio = counter_assignment_total[name] / total_capacity
             return (
+                round(counter_load_ratio, 4),
                 counter_assignment_total[name],
                 counter_zone_assignment_total[name].get(zone_identity, 0),
                 counter_consecutive_hours[name],
-                1 if previous_assignments.get(name) == zone_name else 0,
+                floor_1f_total[name],
             )
 
         best_score = min(counter_score(name) for name in shuffled_candidates)
