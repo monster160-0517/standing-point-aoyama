@@ -643,6 +643,7 @@ def run_rotation():
     counter_assignment_total = {n: 0 for n in working_names}
     counter_zone_assignment_total = {n: {} for n in working_names}
     counter_consecutive_hours = {n: 0 for n in working_names}
+    assignment_locks = {n: None for n in working_names}
     MAX_1F = 6
     MAX_W_HOURS = 4
     MAX_CONSECUTIVE_COUNTER_HOURS = 2
@@ -807,31 +808,38 @@ def run_rotation():
             )
         return chosen
 
-    def assign_staff_to_zone(slot, zone_name, chosen_name, zone_assigned_count):
+    def assign_staff_to_zone(slot, zone_name, chosen_name, zone_assigned_count, create_followup_lock=True):
         schedule_df.at[slot, chosen_name] = zone_name
         previous_assignments[chosen_name] = zone_name
         record_zone_assignment(chosen_name, zone_name)
         zone_assigned_count[zone_name] = zone_assigned_count.get(zone_name, 0) + 1
         pool.remove(chosen_name)
         update_floor_state(chosen_name, zone_name)
+        if create_followup_lock:
+            assignment_locks[chosen_name] = {"zone": zone_name, "remaining_slots": 1}
+        else:
+            assignment_locks[chosen_name] = None
 
     for slot in all_time_slots:
         pool = []
         for s in final_staff_configs:
             if slot in s["meals"]:
                 schedule_df.at[slot, s['display_name']] = "식사"
+                assignment_locks[s['display_name']] = None
                 previous_assignments[s['display_name']] = None
                 floor_state[s['display_name']]['floor'] = None
                 floor_state[s['display_name']]['count'] = 0
                 counter_consecutive_hours[s['display_name']] = 0
             elif slot in s.get("second_breaks", []):
                 schedule_df.at[slot, s['display_name']] = "2回目休憩"
+                assignment_locks[s['display_name']] = None
                 previous_assignments[s['display_name']] = None
                 floor_state[s['display_name']]['floor'] = None
                 floor_state[s['display_name']]['count'] = 0
                 counter_consecutive_hours[s['display_name']] = 0
             elif slot in s.get("docent_times", []):
                 schedule_df.at[slot, s['display_name']] = "도슨트"
+                assignment_locks[s['display_name']] = None
                 previous_assignments[s['display_name']] = None
                 floor_state[s['display_name']]['floor'] = None
                 floor_state[s['display_name']]['count'] = 0
@@ -840,6 +848,7 @@ def run_rotation():
                 pool.append(s['display_name'])
             else:
                 schedule_df.at[slot, s['display_name']] = " "
+                assignment_locks[s['display_name']] = None
                 previous_assignments[s['display_name']] = None
                 floor_state[s['display_name']]['floor'] = None
                 floor_state[s['display_name']]['count'] = 0
@@ -856,6 +865,20 @@ def run_rotation():
                 for z in all_zones
                 if parse_zone_capacity(to_row[z]) > 0 and not is_docent_zone(z)
             }
+
+            locked_names = [name for name in list(pool) if assignment_locks.get(name)]
+            for locked_name in locked_names:
+                lock_info = assignment_locks.get(locked_name)
+                if not lock_info:
+                    continue
+                locked_zone = lock_info["zone"]
+                assign_staff_to_zone(
+                    slot,
+                    locked_zone,
+                    locked_name,
+                    zone_assigned_count,
+                    create_followup_lock=False,
+                )
 
             for z in zone_assignment_plan:
                 current_count = zone_assigned_count.get(z, 0)
