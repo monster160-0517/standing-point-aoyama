@@ -1058,13 +1058,9 @@ if 'result_df' in st.session_state:
     display_df.index.name = "氏名"
     editor_df = display_df.reset_index()
     editor_df = editor_df[["氏名"] + [c for c in editor_df.columns if c != "氏名"]]
-    zone_choices = set(display_to_raw.keys())
-    zone_choices.update(str(val).strip() for val in display_df.values.flatten() if str(val).strip())
-    zone_choices.update(to_display_value(val) for val in ["식사", "2回目休憩", "도슨트", "1층 유동", "2층 유동", "-", ""])
-    zone_choices = sorted(choice for choice in zone_choices if choice != "")
     column_settings = {
         col: (
-            st.column_config.SelectboxColumn(options=zone_choices, width="small")
+            st.column_config.TextColumn(width="small")
             if col != "氏名"
             else st.column_config.TextColumn(label="氏名", disabled=True, width="medium")
         )
