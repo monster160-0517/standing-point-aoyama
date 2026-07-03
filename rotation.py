@@ -26,7 +26,7 @@ st.caption("フロアスケジュール / Floor schedule")
 STORE_NAME = "GENTLEMONSTER AOYAMA"
 SHEET_ID = "1XcXSvokpLlkWnTQtqs-Zlz6lLISXJ9Zy14kEOIOUGlA"
 DAY_TYPES = {
-    "평일": {"DB_GID": "738722894", "TO_GID": "410487706"},
+    "평일": {"DB_GID": "0", "TO_GID": "410487706"},
     "주말": {"DB_GID": "0", "TO_GID": "2126973547"},
 }
 DAY_TYPE_LABELS = {
@@ -48,7 +48,7 @@ COLUMN_ALIASES = {
     "lunch": ["점심", "昼休憩", "Lunch"],
     "dinner": ["저녁", "夕方休憩", "Dinner"],
     "meal_time": ["식사시간", "食事時間", "食事時間1H", "Meal Time"],
-    "second_break": ["2回目休憩", "第二休憩", "Second Break"],
+    "second_break": ["2回目休憩", "２回目休憩", "第二休憩", "Second Break"],
     "counter_flag": ["카운터여부", "カウンター可否", "レジ可能有無", "Counter Eligible"],
     "flex_flag": ["유동여부", "流動可否", "OP可能有無", "Float Eligible", "OP"],
 }
@@ -68,7 +68,6 @@ day_type_config = DAY_TYPES[selected_day_type]
 DB_SHEET_GID = day_type_config["DB_GID"]
 TO_SHEET_GID = day_type_config["TO_GID"]
 
-@st.cache_data(ttl=1)
 def load_sheet_data(sheet_id, gid=None, sheet_name=None, show_errors=True):
     if sheet_name:
         encoded_sheet_name = quote(sheet_name)
@@ -76,7 +75,7 @@ def load_sheet_data(sheet_id, gid=None, sheet_name=None, show_errors=True):
     else:
         url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
     try:
-        df = pd.read_csv(url, skip_blank_lines=True, dtype=str)
+        df = pd.read_csv(url, skip_blank_lines=True, dtype=str, keep_default_na=False)
         df.columns = [str(c).strip() for c in df.columns]
         df = df.fillna("").replace(r'\.0$', '', regex=True)
         return df
@@ -104,11 +103,46 @@ def find_docent_columns(columns):
         if any(token.lower() in str(column).lower() for token in DOCENT_COLUMN_TOKENS)
     ]
 
+def count_staff_rows(data):
+    if data.empty:
+        return 0
+    name_col = find_column(data.columns, COLUMN_ALIASES["name"], None)
+    type_col = find_column(data.columns, COLUMN_ALIASES["type"], None)
+    if not name_col or not type_col or name_col not in data.columns or type_col not in data.columns:
+        return 0
+
+    count = 0
+    for _, row in data.iterrows():
+        name = str(row.get(name_col, "")).strip()
+        staff_type = str(row.get(type_col, "")).strip().lower()
+        if name and any(token in staff_type for token in ['정직', '파트', '正社員', 'アルバイト', 'ft', 'pt', 'full', 'part']):
+            count += 1
+    return count
+
 db_df = load_sheet_data(SHEET_ID, DB_SHEET_GID)
+db_source_label = selected_day_type
+db_staff_count = count_staff_rows(db_df)
+if db_staff_count == 0:
+    fallback_day_type = next((day_type for day_type in DAY_TYPES if day_type != selected_day_type), None)
+    if fallback_day_type:
+        fallback_gid = DAY_TYPES[fallback_day_type]["DB_GID"]
+        fallback_db_df = load_sheet_data(SHEET_ID, fallback_gid)
+        fallback_staff_count = count_staff_rows(fallback_db_df)
+        if fallback_staff_count > 0:
+            db_df = fallback_db_df
+            db_source_label = fallback_day_type
+            db_staff_count = fallback_staff_count
+
 to_df = load_sheet_data(SHEET_ID, TO_SHEET_GID)
 docent_df = load_first_available_sheet(SHEET_ID, ["도슨트", "ドーセント", "Docent"])
 
 if db_df.empty: st.stop()
+if db_source_label != selected_day_type:
+    st.warning(
+        f"選択した{DAY_TYPE_LABELS.get(selected_day_type, selected_day_type)}のDBに出勤データがなかったため、"
+        f"{DAY_TYPE_LABELS.get(db_source_label, db_source_label)}のDBを代わりに使用しています / "
+        f"No active staff rows were found in the selected DB, so the app is temporarily using the {DAY_TYPE_LABELS.get(db_source_label, db_source_label)} DB."
+    )
 
 def get_clean_time(val):
     val = str(val).strip()
