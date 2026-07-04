@@ -1276,6 +1276,28 @@ if 'result_df' in st.session_state:
         table_html += "</tbody></table></div>"
         return table_html
 
+    def build_large_view_table(df):
+        table_html = "<div class='large-table-shell' id='large-table-shell'><table class='large-rotation-table' id='large-rotation-table'>"
+        table_html += "<thead><tr><th>氏名</th>"
+        for time in df.columns:
+            table_html += f"<th>{escape(str(time))}</th>"
+        table_html += "</tr></thead><tbody>"
+        for staff, row in df.iterrows():
+            color = get_staff_color(staff)
+            table_html += f"<tr><td class='staff-name' style='color: {color};'>{escape(str(staff))}</td>"
+            for _, val in row.items():
+                text = normalize_schedule_value(val)
+                zone_style = get_zone_style(text)
+                cell_style = (
+                    f"background-color: {zone_style['bg']};"
+                    f"color: {zone_style['fg']};"
+                    f"font-weight: {zone_style['weight']};"
+                )
+                table_html += f"<td style='{cell_style}'>{escape(text)}</td>"
+            table_html += "</tr>"
+        table_html += "</tbody></table></div>"
+        return table_html
+
     def build_color_legend():
         legend_items = [
             ("カウンター", get_zone_style("カウンター")),
@@ -1355,6 +1377,7 @@ if 'result_df' in st.session_state:
     )
     coverage_rows, total_empty_zones, total_remaining_to, affected_times = build_zone_coverage_summary(edited_raw_df)
     table_html = build_table(edited_display_df)
+    large_table_html = build_large_view_table(edited_display_df)
     coverage_table_html = build_zone_coverage_table(coverage_rows, edited_display_df.columns)
     color_legend_html = build_color_legend()
     page_html = "<!doctype html><html lang='ja'><head><meta charset='utf-8'/><title>モバイル共有ボード / Mobile share board</title>"
@@ -1363,42 +1386,36 @@ if 'result_df' in st.session_state:
         "html,body{height:100%;margin:0;padding:0;background:#f8fafc;font-family:'Pretendard','Noto Sans KR',sans-serif;overflow:hidden;}"
         ".page-wrap{height:100vh;padding:8px;box-sizing:border-box;overflow:hidden;}"
         ".page-title{margin:0 0 8px;text-align:center;font-size:0.95rem;line-height:1.1;}"
-        ".fit-stage{width:100%;height:calc(100vh - 44px);overflow:hidden;border-radius:10px;}"
-        ".fit-frame{position:relative;margin:0 auto;}"
-        ".fit-content{position:absolute;top:0;left:0;transform-origin:top left;}"
-        ".table-scroll{overflow:visible;border-radius:10px;box-shadow:none;}"
-        ".rotation-table{font-size:0.7rem;table-layout:fixed;background:#fff;}"
-        ".rotation-table th,.rotation-table td{padding:3px 4px;min-width:46px;}"
-        ".rotation-table .staff-name{min-width:104px;max-width:104px;}"
-        ".rotation-table thead th{position:static;}"
-        ".rotation-table .staff-name{position:static;}"
+        ".fit-stage{width:100%;height:calc(100vh - 44px);overflow:hidden;display:flex;justify-content:center;align-items:flex-start;}"
+        ".large-table-shell{display:inline-block;transform-origin:top center;zoom:1;}"
+        ".large-rotation-table{border-collapse:collapse;font-size:0.72rem;line-height:1.1;background:#fff;box-shadow:none;}"
+        ".large-rotation-table th,.large-rotation-table td{border:1px solid #d1d5db;padding:3px 4px;text-align:center;vertical-align:middle;white-space:nowrap;min-width:46px;}"
+        ".large-rotation-table th{background:#f8f9fa;font-weight:700;}"
+        ".large-rotation-table .staff-name{min-width:104px;max-width:104px;font-weight:700;background:#fff;}"
         "</style>"
-        f"{table_styles}"
     )
     page_html += (
         "</head><body><div class='page-wrap'>"
         "<h1 class='page-title'>モバイル共有ボード / Mobile share board</h1>"
-        "<div class='fit-stage'><div class='fit-frame' id='fit-frame'><div class='fit-content' id='fit-content'>"
+        "<div class='fit-stage' id='fit-stage'>"
     )
-    page_html += table_html
+    page_html += large_table_html
     page_html += (
-        "</div></div></div></div>"
+        "</div></div>"
         "<script>"
         "function fitRotationTable(){"
-        "const stage=document.querySelector('.fit-stage');"
-        "const frame=document.getElementById('fit-frame');"
-        "const content=document.getElementById('fit-content');"
-        "const table=document.querySelector('.rotation-table');"
-        "if(!stage||!frame||!content||!table)return;"
-        "content.style.transform='scale(1)';"
+        "const stage=document.getElementById('fit-stage');"
+        "const shell=document.getElementById('large-table-shell');"
+        "const table=document.getElementById('large-rotation-table');"
+        "if(!stage||!shell||!table)return;"
+        "shell.style.zoom='1';"
         "const stageWidth=Math.max(stage.clientWidth-4,1);"
+        "const stageHeight=Math.max(stage.clientHeight-4,1);"
         "const tableWidth=table.offsetWidth;"
         "const tableHeight=table.offsetHeight;"
         "if(!tableWidth||!tableHeight)return;"
-        "const scale=Math.min(stageWidth/tableWidth, 1);"
-        "frame.style.width=(tableWidth*scale)+'px';"
-        "frame.style.height=(tableHeight*scale)+'px';"
-        "content.style.transform='scale('+scale+')';"
+        "const scale=Math.min(stageWidth/tableWidth, stageHeight/tableHeight, 1);"
+        "shell.style.zoom=String(scale);"
         "}"
         "window.addEventListener('load', fitRotationTable);"
         "window.addEventListener('resize', fitRotationTable);"
