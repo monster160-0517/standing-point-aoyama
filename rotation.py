@@ -808,12 +808,9 @@ def run_rotation():
             return False
         return slot_minutes % 60 == 0
 
-    def build_zone_assignment_plan(to_row):
-        counter_pass = []
-        other_first_pass = []
-        other_extra_pass = []
+    def get_capped_zone_capacities(to_row):
+        zone_capacities = []
         flex_capacity_used = 0
-
         for zone_name in all_zones:
             capacity = parse_zone_capacity(to_row[zone_name])
             if capacity <= 0 or is_docent_zone(zone_name):
@@ -824,14 +821,17 @@ def run_rotation():
                 if capacity <= 0:
                     continue
                 flex_capacity_used += capacity
-            if is_counter_zone(zone_name):
-                counter_pass.extend([zone_name] * capacity)
-            else:
-                other_first_pass.append(zone_name)
-                if capacity > 1:
-                    other_extra_pass.extend([zone_name] * (capacity - 1))
+            zone_capacities.append((zone_name, capacity))
+        return zone_capacities
 
-        return counter_pass + other_first_pass + other_extra_pass
+    def build_zone_assignment_plan(to_row):
+        first_pass = []
+        extra_pass = []
+        for zone_name, capacity in get_capped_zone_capacities(to_row):
+            first_pass.append(zone_name)
+            if capacity > 1:
+                extra_pass.extend([zone_name] * (capacity - 1))
+        return first_pass + extra_pass
 
     def choose_staff_for_zone(zone_name, pool_names, current_zone_count, ignore_1f_limit=False):
         is_first_coverage_assignment = current_zone_count == 0
@@ -922,19 +922,10 @@ def run_rotation():
         if to_row is not None:
             zone_assignment_plan = build_zone_assignment_plan(to_row)
             zone_assigned_count = {}
-            zone_required_capacity = {}
-            flex_capacity_used = 0
-            for z in all_zones:
-                required_capacity = parse_zone_capacity(to_row[z])
-                if required_capacity <= 0 or is_docent_zone(z):
-                    continue
-                if is_flexible_zone(z):
-                    remaining_flex_capacity = MAX_OP_ASSIGNMENTS_PER_SLOT - flex_capacity_used
-                    required_capacity = min(required_capacity, remaining_flex_capacity)
-                    if required_capacity <= 0:
-                        continue
-                    flex_capacity_used += required_capacity
-                zone_required_capacity[z] = required_capacity
+            zone_required_capacity = {
+                zone_name: capacity
+                for zone_name, capacity in get_capped_zone_capacities(to_row)
+            }
 
             locked_names = [name for name in list(pool) if assignment_locks.get(name)]
             locked_flexible_assigned = 0
@@ -986,58 +977,36 @@ def run_rotation():
                         continue
                     assign_staff_to_zone(slot, z, chosen, zone_assigned_count)
 
-            flexible_pool = [n for n in pool if staff_lookup[n]["can_flexible"]]
-            inflexible_pool = [n for n in pool if not staff_lookup[n]["can_flexible"]]
-            assigned_flexible_count = sum(
-                count for zone_name, count in zone_assigned_count.items()
-                if is_flexible_zone(zone_name)
-            )
+            extra_priority_zones = [
+                zone_name
+                for zone_name in all_zones
+                if zone_required_capacity.get(zone_name, 0) > 0
+                and not is_counter_zone(zone_name)
+                and not is_flexible_zone(zone_name)
+                and not is_docent_zone(zone_name)
+            ]
 
-            remaining_flexible_capacity = max(MAX_OP_ASSIGNMENTS_PER_SLOT - assigned_flexible_count, 0)
-            for n in flexible_pool[:remaining_flexible_capacity]: # TO 시트에 있는 유동 구역만 사용
-                if not flex_1f and not flex_2f:
-                    # 유동 구역 자체가 없으면 미배정
-                    schedule_df.at[slot, n] = "-"
-                    previous_assignments[n] = None
-                    floor_state[n]["floor"] = None
-                    floor_state[n]["count"] = 0
-                    continue
+            if pool and extra_priority_zones:
+                made_progress = True
+                while pool and made_progress:
+                    made_progress = False
+                    for zone_name in extra_priority_zones:
+                        chosen = choose_staff_for_zone(zone_name, pool, zone_assigned_count.get(zone_name, 0))
+                        if not chosen:
+                            chosen = choose_staff_for_zone(
+                                zone_name,
+                                pool,
+                                zone_assigned_count.get(zone_name, 0),
+                                ignore_1f_limit=True,
+                            )
+                        if not chosen:
+                            continue
+                        assign_staff_to_zone(slot, zone_name, chosen, zone_assigned_count)
+                        made_progress = True
+                        if not pool:
+                            break
 
-                current_assignments = [
-                    val for val in schedule_df.loc[slot].tolist()
-                    if str(val).strip() not in ["-", "", " ", "식사"]
-                ]
-                f1_cnt = sum(1 for val in current_assignments if get_zone_category(val) == "1f")
-                f2_cnt = sum(1 for val in current_assignments if get_zone_category(val) == "2f")
-
-                can_1f = flex_1f and floor_1f_total[n] < MAX_1F
-                if can_1f and flex_2f:
-                    flexible_zone = flex_1f if f1_cnt <= f2_cnt else flex_2f
-                    if previous_assignments.get(n) == flexible_zone:
-                        flexible_zone = flex_2f if flexible_zone == flex_1f else flex_1f
-                    # 1층 선택됐는데 한도 초과면 2층으로
-                    if flexible_zone == flex_1f and floor_1f_total[n] >= MAX_1F:
-                        flexible_zone = flex_2f
-                elif flex_2f:
-                    flexible_zone = flex_2f
-                elif can_1f:
-                    flexible_zone = flex_1f
-                else:
-                    flexible_zone = flex_2f  # 한도 초과 시 2층으로 강제
-
-                schedule_df.at[slot, n] = flexible_zone
-                previous_assignments[n] = flexible_zone
-                record_zone_assignment(n, flexible_zone)
-                update_floor_state(n, flexible_zone)
-
-            for n in flexible_pool[remaining_flexible_capacity:]:
-                schedule_df.at[slot, n] = "-"
-                previous_assignments[n] = None
-                floor_state[n]["floor"] = None
-                floor_state[n]["count"] = 0
-                counter_consecutive_hours[n] = 0
-
-            for n in inflexible_pool:
+            for n in pool:
                 schedule_df.at[slot, n] = "-"
                 previous_assignments[n] = None
                 floor_state[n]["floor"] = None
